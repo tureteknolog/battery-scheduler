@@ -1,0 +1,33 @@
+# Databasfiler (viktigt - kan innehålla känsliga inställningar!)
+data/
+*.db
+*.db-journal
+
+# Go
+backend/main
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+
+# Environment files (om du senare lägger till)
+.env
+.env.local

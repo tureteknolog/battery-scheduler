@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  battery-scheduler:
+    build: .
+    container_name: battery-scheduler
+    ports:
+      - "8080:8080"
+    volumes:
+      # Databas sparas utanför containern så den överlever omstarter
+      - ./data:/data
+      # Om du vill kunna ändra frontend utan rebuild
+      - ./frontend:/root/frontend
+    environment:
+      - PORT=8080
+      - TZ=Europe/Stockholm
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
