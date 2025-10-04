@@ -1,7 +1,7 @@
 const { useState, useEffect, useMemo, useRef } = React;
 
 // API base URL - ändra om du kör på annan port
-const API_BASE = 'http://localhost:8080/api';
+const API_BASE = '/api';
 
 const MODES = [
   { id: 1, name: 'Passiv', color: 'bg-gray-400', textColor: 'text-gray-800', desc: 'Sol' },
@@ -614,7 +614,7 @@ function BatteryScheduler() {
             </svg>
           </div>
         </div>
-        
+
         {/* Summering per läge */}
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold mb-4">Summering per läge</h2>
