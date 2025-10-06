@@ -14,8 +14,14 @@ import (
 )
 
 func main() {
+	// Läs miljövariabler först, fallback till databas
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "/data/battery-scheduler.db" // Persistent plats
+	}
+
 	// Skapa databas
-	database, err := db.NewDatabase("battery-scheduler.db")
+	database, err := db.NewDatabase(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -23,11 +29,26 @@ func main() {
 
 	log.Println("Database initialized")
 
-	// Hämta inställningar från databas
-	entsoeToken, _ := database.GetSetting("entsoe_token")
-	pushoverApp, _ := database.GetSetting("pushover_app")
-	pushoverUser, _ := database.GetSetting("pushover_user")
-	area := "SE3" // Kan göras konfigurerbart senare
+	// Hämta inställningar från miljövariabler först, sedan databas
+	entsoeToken := os.Getenv("ENTSOE_TOKEN")
+	if entsoeToken == "" {
+		entsoeToken, _ = database.GetSetting("entsoe_token")
+	}
+
+	pushoverApp := os.Getenv("PUSHOVER_APP")
+	if pushoverApp == "" {
+		pushoverApp, _ = database.GetSetting("pushover_app")
+	}
+
+	pushoverUser := os.Getenv("PUSHOVER_USER")
+	if pushoverUser == "" {
+		pushoverUser, _ = database.GetSetting("pushover_user")
+	}
+
+	area := os.Getenv("PRICE_AREA")
+	if area == "" {
+		area = "SE3"
+	}
 
 	// Skapa services
 	entsoeService := services.NewEntsoeService(entsoeToken, area)
