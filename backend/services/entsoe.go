@@ -122,8 +122,14 @@ func (e *EntsoeService) FetchPrices(from, to time.Time) ([]models.Price, error) 
 			// Konvertera från EUR/MWh till öre/kWh inkl 25% moms
 			// 1 EUR/MWh = 0.1 öre/kWh (ungefär, beroende på växelkurs)
 			// Vi använder ca 11 SEK/EUR som standard
-			priceOreExclMoms := int(point.Price * 0.11) // EUR/MWh -> öre/kWh
-			priceOreInclMoms := int(float64(priceOreExclMoms) * 1.25)
+			// Korrekt konvertering: EUR/MWh -> öre/kWh inkl moms
+			// 1. EUR/MWh -> EUR/kWh: /1000
+			// 2. EUR -> SEK: *11 (växelkurs)
+			// 3. SEK -> öre: *100
+			// 4. Lägg till moms: *1.25
+			const EXCHANGE_RATE = 11.0
+			const VAT = 1.25
+			priceOreInclMoms := int(point.Price / 1000.0 * EXCHANGE_RATE * 100.0 * VAT)
 
 			prices = append(prices, models.Price{
 				Timestamp: timestamp.In(time.Local), // Konvertera till lokal tid
