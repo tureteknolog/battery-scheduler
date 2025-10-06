@@ -127,8 +127,10 @@ func (e *EntsoeService) FetchPrices(from, to time.Time) ([]models.Price, error) 
 			// 2. EUR -> SEK: *11 (växelkurs)
 			// 3. SEK -> öre: *100
 			// 4. Lägg till moms: *1.25
-			const EXCHANGE_RATE = 11.0
-			const VAT = 1.25
+			// EUR/MWh -> öre/kWh inkl moms
+			// Exempel: 14.18 EUR/MWh -> 0.01418 EUR/kWh -> 0.164 SEK/kWh -> 16.4 öre/kWh -> 20.5 öre/kWh
+			const EXCHANGE_RATE = 11.6 // SEK per EUR (uppdatera efter behov)
+			const VAT = 1.25           // 25% moms
 			priceOreInclMoms := int(point.Price / 1000.0 * EXCHANGE_RATE * 100.0 * VAT)
 
 			prices = append(prices, models.Price{
