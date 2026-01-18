@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"time"
 
 	"battery-scheduler/models"
@@ -141,7 +142,105 @@ func (e *EntsoeService) FetchPrices(from, to time.Time) ([]models.Price, error) 
 		}
 	}
 
+	// Sort prices by timestamp and fill any gaps with interpolated values
+	prices = e.fillPriceGaps(prices, from, to)
+
 	return prices, nil
+}
+
+// fillPriceGaps sorts prices by timestamp and fills any missing 15-minute
+// periods with interpolated values
+func (e *EntsoeService) fillPriceGaps(prices []models.Price, from, to time.Time) []models.Price {
+	if len(prices) == 0 {
+		return prices
+	}
+
+	// Sort by timestamp
+	sort.Slice(prices, func(i, j int) bool {
+		return prices[i].Timestamp.Before(prices[j].Timestamp)
+	})
+
+	// Remove duplicates (keep first occurrence)
+	seen := make(map[int64]bool)
+	unique := make([]models.Price, 0, len(prices))
+	for _, p := range prices {
+		key := p.Timestamp.Unix()
+		if !seen[key] {
+			seen[key] = true
+			unique = append(unique, p)
+		}
+	}
+	prices = unique
+
+	// Build a map of existing prices for quick lookup
+	priceMap := make(map[int64]models.Price)
+	for _, p := range prices {
+		// Round to nearest 15-minute boundary
+		ts := p.Timestamp.Truncate(15 * time.Minute)
+		priceMap[ts.Unix()] = p
+	}
+
+	// Generate all expected 15-minute timestamps and fill gaps
+	var result []models.Price
+	fromLocal := from.In(time.Local).Truncate(15 * time.Minute)
+	toLocal := to.In(time.Local).Truncate(15 * time.Minute)
+
+	for current := fromLocal; current.Before(toLocal); current = current.Add(15 * time.Minute) {
+		key := current.Unix()
+		if existing, ok := priceMap[key]; ok {
+			result = append(result, existing)
+		} else {
+			// Gap detected - interpolate from neighbors
+			interpolated := e.interpolatePrice(current, priceMap)
+			result = append(result, models.Price{
+				Timestamp: current,
+				PriceOre:  interpolated,
+				Area:      e.area,
+			})
+		}
+	}
+
+	return result
+}
+
+// interpolatePrice finds the nearest prices before and after the gap
+// and returns an interpolated value
+func (e *EntsoeService) interpolatePrice(t time.Time, priceMap map[int64]models.Price) int {
+	// Look for nearest price before
+	var beforePrice, afterPrice int
+	var foundBefore, foundAfter bool
+
+	// Search backwards up to 4 hours (16 quarters)
+	for delta := 15 * time.Minute; delta <= 4*time.Hour; delta += 15 * time.Minute {
+		before := t.Add(-delta)
+		if p, ok := priceMap[before.Unix()]; ok {
+			beforePrice = p.PriceOre
+			foundBefore = true
+			break
+		}
+	}
+
+	// Search forwards up to 4 hours (16 quarters)
+	for delta := 15 * time.Minute; delta <= 4*time.Hour; delta += 15 * time.Minute {
+		after := t.Add(delta)
+		if p, ok := priceMap[after.Unix()]; ok {
+			afterPrice = p.PriceOre
+			foundAfter = true
+			break
+		}
+	}
+
+	// Interpolate based on what we found
+	if foundBefore && foundAfter {
+		return (beforePrice + afterPrice) / 2
+	} else if foundBefore {
+		return beforePrice
+	} else if foundAfter {
+		return afterPrice
+	}
+
+	// No neighbors found - use a default value
+	return 100 // 100 öre as fallback
 }
 
 // GenerateMockPrices skapar mock-data för testning (används tills token finns)
