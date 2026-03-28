@@ -788,6 +788,7 @@ function BatteryScheduler() {
               </thead>
               <tbody>
                 {prices.map((priceData, idx) => {
+                  if (idx < currentQuarterIndex) return null;
                   const currentMode = getModeForQuarter(idx);
                   const isCheap = cheapestIndices.has(idx);
                   const isExpensive = expensiveIndices.has(idx);
