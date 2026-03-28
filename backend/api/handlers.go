@@ -49,11 +49,6 @@ func (a *API) GetPrices(c *gin.Context) {
 		return
 	}
 
-	// Om inga priser finns i databasen, använd mock-data
-	if len(prices) == 0 {
-		prices = a.entsoe.GenerateMockPrices(startOfToday, endOfTomorrow)
-	}
-
 	c.JSON(http.StatusOK, prices)
 }
 
@@ -176,8 +171,8 @@ func (a *API) RefreshPrices(c *gin.Context) {
 	// Hämta priser från Entsoe
 	prices, err := a.entsoe.FetchPrices(startOfToday, endOfTomorrow)
 	if err != nil {
-		// Om det misslyckas (t.ex. saknas token), använd mock-data
-		prices = a.entsoe.GenerateMockPrices(startOfToday, endOfTomorrow)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Kunde inte hämta priser: %v", err)})
+		return
 	}
 
 	// Spara till databas

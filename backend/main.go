@@ -129,8 +129,7 @@ func main() {
 		prices, err := entsoeService.FetchPrices(startOfToday, endOfTomorrow)
 		if err != nil {
 			log.Printf("Failed to fetch prices from Entsoe: %v", err)
-			// Fallback till mock-data
-			prices = entsoeService.GenerateMockPrices(startOfToday, endOfTomorrow)
+			return // Avbryt - spara INTE mock-data till databasen
 		}
 
 		if err := database.SavePrices(prices); err != nil {
