@@ -97,7 +97,7 @@ function BatteryScheduler() {
     
     loadData();
     
-    // Uppdatera SoC varje minut
+    // Uppdatera SoC var 30:e sekund (fångar solpanelsladdning snabbare)
     const interval = setInterval(async () => {
       try {
         const socRes = await fetch(`${API_BASE}/battery-soc`);
@@ -106,7 +106,7 @@ function BatteryScheduler() {
       } catch (error) {
         console.error('Failed to update SoC:', error);
       }
-    }, 60000);
+    }, 30000);
     
     return () => clearInterval(interval);
   }, []);
@@ -125,18 +125,34 @@ function BatteryScheduler() {
     return currentMode;
   };
   
-  // Simulera batterinivå över tid
-  const simulateBatterySoC = useMemo(() => {
-    const result = [];
-    let soc = currentSoC;
-    
+  // Hitta index för aktuell kvart
+  const currentQuarterIndex = useMemo(() => {
+    if (prices.length === 0) return 0;
+    const now = new Date();
     for (let i = 0; i < prices.length; i++) {
+      const nextTime = i + 1 < prices.length ? prices[i + 1].timestamp : new Date(prices[i].timestamp.getTime() + 15 * 60 * 1000);
+      if (now >= prices[i].timestamp && now < nextTime) return i;
+    }
+    return 0;
+  }, [prices]);
+
+  // Simulera batterinivå: använd riktig SoC vid aktuell tidpunkt, simulera framåt
+  const simulateBatterySoC = useMemo(() => {
+    const result = new Array(prices.length).fill(null);
+    if (prices.length === 0) return result;
+
+    // Sätt riktig SoC vid aktuell kvart
+    result[currentQuarterIndex] = currentSoC;
+
+    // Simulera framåt från nu
+    let soc = currentSoC;
+    for (let i = currentQuarterIndex + 1; i < prices.length; i++) {
       const mode = getModeForQuarter(i);
       const consumptionKw = consumption[i] || 1.0;
       const quarterHours = 0.25;
-      
+
       let deltaEnergy = 0;
-      
+
       if (mode === 2) {
         const chargePower = getChargePower(soc);
         deltaEnergy = chargePower * quarterHours;
@@ -145,15 +161,15 @@ function BatteryScheduler() {
       } else if (mode === 5 || mode === 6) {
         deltaEnergy = 0;
       }
-      
+
       const deltaSoC = (deltaEnergy / BATTERY_CAPACITY) * 100;
       soc = Math.max(MIN_SOC, Math.min(100, soc - deltaSoC));
-      
-      result.push(Number(soc.toFixed(1)));
+
+      result[i] = Number(soc.toFixed(1));
     }
-    
+
     return result;
-  }, [schedule, currentSoC, consumption, prices]);
+  }, [schedule, currentSoC, consumption, prices, currentQuarterIndex]);
   
   // Summering
   const summary = useMemo(() => {
@@ -555,9 +571,9 @@ function BatteryScheduler() {
                   );
                 })}
 
-                {/* SoC-linje (skala 0-100%) */}
+                {/* SoC-linje (skala 0-100%, bara från nu och framåt) */}
                 {simulateBatterySoC.map((soc, idx) => {
-                  if (idx === 0) return null;
+                  if (idx === 0 || soc === null || simulateBatterySoC[idx - 1] === null) return null;
                   const x1 = 60 + ((idx - 1) / simulateBatterySoC.length) * 1120;
                   const x2 = 60 + (idx / simulateBatterySoC.length) * 1120;
                   const y1 = 310 - (simulateBatterySoC[idx - 1] / 100) * 300;
@@ -747,7 +763,7 @@ function BatteryScheduler() {
                   
                   const priceColor = getPriceColor(priceData.price, minPriceScale, maxPriceScale);
                   const soc = simulateBatterySoC[idx];
-                  const socColor = soc <= 20 ? 'bg-red-100' : soc <= 50 ? 'bg-yellow-100' : 'bg-green-100';
+                  const socColor = soc === null ? 'bg-gray-50' : soc <= 20 ? 'bg-red-100' : soc <= 50 ? 'bg-yellow-100' : 'bg-green-100';
                   
                   return (
                     <tr key={idx} className="border-t hover:bg-gray-50">
@@ -769,7 +785,7 @@ function BatteryScheduler() {
                         {consumption[idx] ? consumption[idx].toFixed(1) : '-'}
                       </td>
                       <td className={`px-2 py-2 text-center font-semibold border-r text-xs ${socColor}`}>
-                        {soc}%
+                        {soc !== null ? `${soc}%` : '-'}
                       </td>
                       {MODES.map(mode => {
                         const isActive = currentMode === mode.id;
