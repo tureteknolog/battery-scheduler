@@ -56,6 +56,8 @@ function BatteryScheduler() {
   const [draggedQuarters, setDraggedQuarters] = useState(new Set());
   const [dragMode, setDragMode] = useState(null);
   const dragStartRef = useRef(null);
+  const [hoverIdx, setHoverIdx] = useState(null);
+  const svgRef = useRef(null);
   
   // Ladda data från backend
   useEffect(() => {
@@ -467,215 +469,245 @@ function BatteryScheduler() {
         {/* Visuell översikt */}
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold mb-4">Översikt: Pris, Förbrukning, SoC & Schema</h2>
-          <div className="w-full" style={{ height: '470px' }}>
-            <svg className="w-full h-full" viewBox="0 0 1260 470" preserveAspectRatio="xMidYMid meet">
-              <defs>
-                <clipPath id="chartArea">
-                  <rect x="60" y="10" width="1120" height="300" />
-                </clipPath>
-              </defs>
+          {(() => {
+            const cStart = currentQuarterIndex;
+            const cLen = prices.length - cStart;
+            if (cLen <= 0) return null;
+            const toX = (idx) => 60 + ((idx - cStart) / cLen) * 1120;
 
-              {/* Y-axel vänster: Pris (öre/kWh) */}
-              {[0, 50, 100, 150, 200, 250, 300, 350, 400].map(price => {
-                const y = 310 - (price / 400) * 300;
-                return (
-                  <g key={price}>
-                    <line x1="60" y1={y} x2="1180" y2={y} stroke="#e5e7eb" strokeWidth="1" />
-                    <text x="50" y={y + 4} textAnchor="end" fontSize="12" fill="#6b7280">
-                      {price}
-                    </text>
-                  </g>
-                );
-              })}
+            const handleChartMouseMove = (e) => {
+              const svg = svgRef.current;
+              if (!svg) return;
+              const rect = svg.getBoundingClientRect();
+              const svgX = (e.clientX - rect.left) / rect.width * 1260;
+              if (svgX < 60 || svgX > 1180) { setHoverIdx(null); return; }
+              const ratio = (svgX - 60) / 1120;
+              const idx = cStart + Math.floor(ratio * cLen);
+              if (idx >= cStart && idx < prices.length) {
+                setHoverIdx(idx);
+              } else {
+                setHoverIdx(null);
+              }
+            };
 
-              {/* Y-axel höger: kW (0-10) / SoC% (0-100) */}
-              {[0, 2, 4, 6, 8, 10].map(kw => {
-                const y = 310 - (kw / 10) * 300;
-                const socPct = kw * 10;
-                return (
-                  <g key={`right-${kw}`}>
-                    <text x="1190" y={y + 4} textAnchor="start" fontSize="11" fill="#6366f1">
-                      {kw}
-                    </text>
-                    <text x="1235" y={y + 4} textAnchor="start" fontSize="11" fill="#f59e0b">
-                      {socPct}%
-                    </text>
-                  </g>
-                );
-              })}
+            // X-axel: generera timmarker från nuvarande timme framåt
+            const startHour = prices[cStart].timestamp.getHours();
+            const startDay = prices[cStart].timestamp.getDate();
+            const xLabels = [];
+            for (let i = cStart; i < prices.length; i++) {
+              const h = prices[i].timestamp.getHours();
+              const m = prices[i].timestamp.getMinutes();
+              if (m === 0 && h % 3 === 0) {
+                const isNewDay = prices[i].timestamp.getDate() !== startDay && h === 0;
+                xLabels.push({ x: toX(i), label: `${h}:00`, isNewDay, date: prices[i].timestamp });
+              }
+            }
 
-              {/* X-axel */}
-              {Array.from({ length: 17 }).map((_, i) => {
-                const hour = i * 3;
-                const x = 60 + (i / 16) * 1120;
-                const label = hour < 24 ? `${hour}:00` : `${hour - 24}:00`;
-                const day = hour < 24 ? 'Idag' : 'Imorgon';
-                return (
+            return (
+            <div className="w-full" style={{ height: '470px', position: 'relative' }}>
+              <svg ref={svgRef} className="w-full h-full" viewBox="0 0 1260 470" preserveAspectRatio="xMidYMid meet"
+                onMouseMove={handleChartMouseMove}
+                onMouseLeave={() => setHoverIdx(null)}
+              >
+                <defs>
+                  <clipPath id="chartArea">
+                    <rect x="60" y="10" width="1120" height="300" />
+                  </clipPath>
+                </defs>
+
+                {/* Y-axel vänster: Pris (öre/kWh) */}
+                {[0, 50, 100, 150, 200, 250, 300, 350, 400].map(price => {
+                  const y = 310 - (price / 400) * 300;
+                  return (
+                    <g key={price}>
+                      <line x1="60" y1={y} x2="1180" y2={y} stroke="#e5e7eb" strokeWidth="1" />
+                      <text x="50" y={y + 4} textAnchor="end" fontSize="12" fill="#6b7280">
+                        {price}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* Y-axel höger: kW (0-10) / SoC% (0-100) */}
+                {[0, 2, 4, 6, 8, 10].map(kw => {
+                  const y = 310 - (kw / 10) * 300;
+                  const socPct = kw * 10;
+                  return (
+                    <g key={`right-${kw}`}>
+                      <text x="1190" y={y + 4} textAnchor="start" fontSize="11" fill="#6366f1">
+                        {kw}
+                      </text>
+                      <text x="1235" y={y + 4} textAnchor="start" fontSize="11" fill="#f59e0b">
+                        {socPct}%
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* X-axel */}
+                {xLabels.map((lbl, i) => (
                   <g key={i}>
-                    <line x1={x} y1="310" x2={x} y2="315" stroke="#9ca3af" strokeWidth="1" />
-                    <text x={x} y="330" textAnchor="middle" fontSize="11" fill="#6b7280">
-                      {label}
+                    <line x1={lbl.x} y1="310" x2={lbl.x} y2="315" stroke="#9ca3af" strokeWidth="1" />
+                    <text x={lbl.x} y="330" textAnchor="middle" fontSize="11" fill="#6b7280">
+                      {lbl.label}
                     </text>
-                    {(hour === 0 || hour === 24) && (
-                      <text x={x} y="345" textAnchor="middle" fontSize="10" fill="#9ca3af" fontWeight="bold">
-                        {day}
+                    {lbl.isNewDay && (
+                      <text x={lbl.x} y="345" textAnchor="middle" fontSize="10" fill="#9ca3af" fontWeight="bold">
+                        {formatDate(lbl.date)}
                       </text>
                     )}
                   </g>
-                );
-              })}
+                ))}
 
-              {/* Prislinje */}
-              <g clipPath="url(#chartArea)">
-                {prices.map((priceData, idx) => {
-                  if (idx === 0) return null;
-                  const x1 = 60 + ((idx - 1) / prices.length) * 1120;
-                  const x2 = 60 + (idx / prices.length) * 1120;
-                  const y1 = 310 - Math.max(0, Math.min(prices[idx - 1].price, 400)) / 400 * 300;
-                  const y2 = 310 - Math.max(0, Math.min(priceData.price, 400)) / 400 * 300;
-                  const color = getPriceColor(priceData.price, minPriceScale, maxPriceScale);
+                {/* Prislinje */}
+                <g clipPath="url(#chartArea)">
+                  {prices.map((priceData, idx) => {
+                    if (idx <= cStart) return null;
+                    const x1 = toX(idx - 1);
+                    const x2 = toX(idx);
+                    const y1 = 310 - Math.max(0, Math.min(prices[idx - 1].price, 400)) / 400 * 300;
+                    const y2 = 310 - Math.max(0, Math.min(priceData.price, 400)) / 400 * 300;
+                    const color = getPriceColor(priceData.price, minPriceScale, maxPriceScale);
 
-                  return (
-                    <line
-                      key={idx}
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke={color}
-                      strokeWidth="2"
-                    />
-                  );
-                })}
+                    return (
+                      <line key={idx} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth="2" />
+                    );
+                  })}
 
-                {/* Förbrukningslinje (skala 0-10 kW) */}
-                {consumption.map((power, idx) => {
-                  if (idx === 0) return null;
-                  const x1 = 60 + ((idx - 1) / consumption.length) * 1120;
-                  const x2 = 60 + (idx / consumption.length) * 1120;
-                  const y1 = 310 - (Math.min(consumption[idx - 1], 10) / 10) * 300;
-                  const y2 = 310 - (Math.min(power, 10) / 10) * 300;
+                  {/* Förbrukningslinje (skala 0-10 kW) */}
+                  {consumption.map((power, idx) => {
+                    if (idx <= cStart || !consumption[idx - 1]) return null;
+                    const x1 = toX(idx - 1);
+                    const x2 = toX(idx);
+                    const y1 = 310 - (Math.min(consumption[idx - 1], 10) / 10) * 300;
+                    const y2 = 310 - (Math.min(power, 10) / 10) * 300;
 
-                  return (
-                    <line
-                      key={`cons-${idx}`}
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke="#6366f1"
-                      strokeWidth="1.5"
-                      strokeDasharray="4,4"
-                      opacity="0.7"
-                    />
-                  );
-                })}
+                    return (
+                      <line key={`cons-${idx}`} x1={x1} y1={y1} x2={x2} y2={y2}
+                        stroke="#6366f1" strokeWidth="1.5" strokeDasharray="4,4" opacity="0.7" />
+                    );
+                  })}
 
-                {/* SoC-linje (skala 0-100%, bara från nu och framåt) */}
-                {simulateBatterySoC.map((soc, idx) => {
-                  if (idx === 0 || soc === null || simulateBatterySoC[idx - 1] === null) return null;
-                  const x1 = 60 + ((idx - 1) / simulateBatterySoC.length) * 1120;
-                  const x2 = 60 + (idx / simulateBatterySoC.length) * 1120;
-                  const y1 = 310 - (simulateBatterySoC[idx - 1] / 100) * 300;
-                  const y2 = 310 - (soc / 100) * 300;
+                  {/* SoC-linje (skala 0-100%) */}
+                  {simulateBatterySoC.map((soc, idx) => {
+                    if (idx <= cStart || soc === null || simulateBatterySoC[idx - 1] === null) return null;
+                    const x1 = toX(idx - 1);
+                    const x2 = toX(idx);
+                    const y1 = 310 - (simulateBatterySoC[idx - 1] / 100) * 300;
+                    const y2 = 310 - (soc / 100) * 300;
 
-                  return (
-                    <line
-                      key={`soc-${idx}`}
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke="#f59e0b"
-                      strokeWidth="2"
-                      opacity="0.8"
-                    />
-                  );
-                })}
-              </g>
+                    return (
+                      <line key={`soc-${idx}`} x1={x1} y1={y1} x2={x2} y2={y2}
+                        stroke="#f59e0b" strokeWidth="2" opacity="0.8" />
+                    );
+                  })}
+                </g>
 
-              {/* Schema-band */}
-              <g>
-                {prices.map((priceData, idx) => {
-                  const mode = getModeForQuarter(idx);
-                  const x = 60 + (idx / prices.length) * 1120;
-                  const width = 1120 / prices.length;
+                {/* Schema-band */}
+                <g>
+                  {prices.map((priceData, idx) => {
+                    if (idx < cStart) return null;
+                    const mode = getModeForQuarter(idx);
+                    const x = toX(idx);
+                    const width = 1120 / cLen;
 
-                  let fillColor = '#9ca3af';
-                  if (mode === 2) fillColor = '#22c55e';
-                  else if (mode === 3) fillColor = '#f97316';
-                  else if (mode === 4) fillColor = '#ef4444';
-                  else if (mode === 5) fillColor = '#3b82f6';
-                  else if (mode === 6) fillColor = '#a855f7';
+                    let fillColor = '#9ca3af';
+                    if (mode === 2) fillColor = '#22c55e';
+                    else if (mode === 3) fillColor = '#f97316';
+                    else if (mode === 4) fillColor = '#ef4444';
+                    else if (mode === 5) fillColor = '#3b82f6';
+                    else if (mode === 6) fillColor = '#a855f7';
 
-                  return (
+                    return (
+                      <rect key={idx} x={x} y="320" width={width} height="30" fill={fillColor} opacity="0.8" />
+                    );
+                  })}
+                </g>
+
+                {/* Hover-linje och tooltip */}
+                {hoverIdx !== null && hoverIdx >= cStart && hoverIdx < prices.length && (
+                  <g>
+                    <line x1={toX(hoverIdx)} y1="10" x2={toX(hoverIdx)} y2="310" stroke="#374151" strokeWidth="1" strokeDasharray="3,3" />
                     <rect
-                      key={idx}
-                      x={x}
-                      y="320"
-                      width={width}
-                      height="30"
-                      fill={fillColor}
-                      opacity="0.8"
+                      x={Math.min(toX(hoverIdx) + 8, 1060)}
+                      y="15"
+                      width="180" height="80" rx="4"
+                      fill="white" stroke="#d1d5db" strokeWidth="1"
+                      filter="drop-shadow(0 1px 2px rgba(0,0,0,0.1))"
                     />
-                  );
-                })}
+                    <text x={Math.min(toX(hoverIdx) + 18, 1070)} y="33" fontSize="12" fontWeight="bold" fill="#374151">
+                      {formatDate(prices[hoverIdx].timestamp)} {formatTime(prices[hoverIdx].timestamp)}
+                    </text>
+                    <text x={Math.min(toX(hoverIdx) + 18, 1070)} y="51" fontSize="12" fill="#6b7280">
+                      Pris: {prices[hoverIdx].price} öre/kWh
+                    </text>
+                    <text x={Math.min(toX(hoverIdx) + 18, 1070)} y="67" fontSize="12" fill="#6366f1">
+                      Förbrukning: {consumption[hoverIdx] ? consumption[hoverIdx].toFixed(1) : '-'} kW
+                    </text>
+                    <text x={Math.min(toX(hoverIdx) + 18, 1070)} y="83" fontSize="12" fill="#f59e0b">
+                      SoC: {simulateBatterySoC[hoverIdx] !== null ? `${simulateBatterySoC[hoverIdx]}%` : '-'}
+                    </text>
+                  </g>
+                )}
 
                 {/* Legend */}
-                <text x="60" y="375" fontSize="12" fill="#6b7280" fontWeight="bold">Pris</text>
-                <line x1="90" y1="372" x2="120" y2="372" stroke="#22c55e" strokeWidth="2" />
+                <g>
+                  <text x="60" y="375" fontSize="12" fill="#6b7280" fontWeight="bold">Pris</text>
+                  <line x1="90" y1="372" x2="120" y2="372" stroke="#22c55e" strokeWidth="2" />
 
-                <text x="140" y="375" fontSize="12" fill="#6366f1" fontWeight="bold">Förbrukning</text>
-                <line x1="225" y1="372" x2="255" y2="372" stroke="#6366f1" strokeWidth="2" strokeDasharray="4,4" />
+                  <text x="140" y="375" fontSize="12" fill="#6366f1" fontWeight="bold">Förbrukning</text>
+                  <line x1="225" y1="372" x2="255" y2="372" stroke="#6366f1" strokeWidth="2" strokeDasharray="4,4" />
 
-                <text x="275" y="375" fontSize="12" fill="#f59e0b" fontWeight="bold">SoC</text>
-                <line x1="300" y1="372" x2="330" y2="372" stroke="#f59e0b" strokeWidth="2" />
+                  <text x="275" y="375" fontSize="12" fill="#f59e0b" fontWeight="bold">SoC</text>
+                  <line x1="300" y1="372" x2="330" y2="372" stroke="#f59e0b" strokeWidth="2" />
 
-                {MODES.slice(0, 4).map((mode, idx) => {
-                  let fillColor = '#9ca3af';
-                  if (mode.id === 2) fillColor = '#22c55e';
-                  else if (mode.id === 3) fillColor = '#f97316';
-                  else if (mode.id === 4) fillColor = '#ef4444';
+                  {MODES.slice(0, 4).map((mode, idx) => {
+                    let fillColor = '#9ca3af';
+                    if (mode.id === 2) fillColor = '#22c55e';
+                    else if (mode.id === 3) fillColor = '#f97316';
+                    else if (mode.id === 4) fillColor = '#ef4444';
 
-                  const x = 60 + idx * 120;
-                  return (
-                    <g key={mode.id}>
-                      <rect x={x} y="395" width="20" height="20" fill={fillColor} opacity="0.8" />
-                      <text x={x + 25} y="410" fontSize="11" fill="#374151">
-                        {mode.name}
-                      </text>
-                    </g>
-                  );
-                })}
+                    const x = 60 + idx * 120;
+                    return (
+                      <g key={mode.id}>
+                        <rect x={x} y="395" width="20" height="20" fill={fillColor} opacity="0.8" />
+                        <text x={x + 25} y="410" fontSize="11" fill="#374151">
+                          {mode.name}
+                        </text>
+                      </g>
+                    );
+                  })}
 
-                {MODES.slice(4).map((mode, idx) => {
-                  let fillColor = mode.id === 5 ? '#3b82f6' : '#a855f7';
-                  const x = 540 + idx * 120;
-                  return (
-                    <g key={mode.id}>
-                      <rect x={x} y="395" width="20" height="20" fill={fillColor} opacity="0.8" />
-                      <text x={x + 25} y="410" fontSize="11" fill="#374151">
-                        {mode.name}
-                      </text>
-                    </g>
-                  );
-                })}
-              </g>
+                  {MODES.slice(4).map((mode, idx) => {
+                    let fillColor = mode.id === 5 ? '#3b82f6' : '#a855f7';
+                    const x = 540 + idx * 120;
+                    return (
+                      <g key={mode.id}>
+                        <rect x={x} y="395" width="20" height="20" fill={fillColor} opacity="0.8" />
+                        <text x={x + 25} y="410" fontSize="11" fill="#374151">
+                          {mode.name}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </g>
 
-              <text x="20" y="160" textAnchor="middle" fontSize="12" fill="#6b7280" transform="rotate(-90 20 160)">
-                Pris (öre/kWh)
-              </text>
-              <text x="1210" y="100" textAnchor="middle" fontSize="11" fill="#6366f1" transform="rotate(90 1210 100)">
-                kW
-              </text>
-              <text x="1250" y="100" textAnchor="middle" fontSize="11" fill="#f59e0b" transform="rotate(90 1250 100)">
-                SoC%
-              </text>
-              <text x="620" y="460" textAnchor="middle" fontSize="12" fill="#6b7280">
-                Tid
-              </text>
-            </svg>
-          </div>
+                <text x="20" y="160" textAnchor="middle" fontSize="12" fill="#6b7280" transform="rotate(-90 20 160)">
+                  Pris (öre/kWh)
+                </text>
+                <text x="1210" y="100" textAnchor="middle" fontSize="11" fill="#6366f1" transform="rotate(90 1210 100)">
+                  kW
+                </text>
+                <text x="1250" y="100" textAnchor="middle" fontSize="11" fill="#f59e0b" transform="rotate(90 1250 100)">
+                  SoC%
+                </text>
+                <text x="620" y="460" textAnchor="middle" fontSize="12" fill="#6b7280">
+                  Tid
+                </text>
+              </svg>
+            </div>
+            );
+          })()}
         </div>
 
         {/* Summering per läge */}
