@@ -17,10 +17,11 @@ type ScheduleChange struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// PowerEstimate är gissad förbrukning för ett kvart
+// PowerEstimate är prognosticerad förbrukning för ett kvart
 type PowerEstimate struct {
-	Timestamp time.Time `json:"timestamp"`
-	PowerKW   float64   `json:"power_kw"`
+	Timestamp   time.Time `json:"timestamp"`
+	PowerKW     float64   `json:"power_kw"`
+	Temperature *float64  `json:"temperature,omitempty"` // Utetemperatur i °C
 }
 
 // CurrentModeResponse är vad vi returnerar till Home Assistant

@@ -50,12 +50,28 @@ func main() {
 		area = "SE3"
 	}
 
+	// Home Assistant-inställningar
+	haURL := os.Getenv("HA_URL")
+	if haURL == "" {
+		haURL, _ = database.GetSetting("ha_url")
+	}
+	haToken := os.Getenv("HA_TOKEN")
+	if haToken == "" {
+		haToken, _ = database.GetSetting("ha_token")
+	}
+
+	// SMHI-koordinater (default: Nacka/Stockholm)
+	smhiLat := 59.38309
+	smhiLon := 17.01550
+
 	// Skapa services
 	entsoeService := services.NewEntsoeService(entsoeToken, area)
 	pushoverService := services.NewPushoverService(pushoverApp, pushoverUser)
+	smhiService := services.NewSMHIService(smhiLat, smhiLon)
+	haService := services.NewHomeAssistantService(haURL, haToken)
 
 	// Skapa API
-	apiHandler := api.NewAPI(database, entsoeService, pushoverService)
+	apiHandler := api.NewAPI(database, entsoeService, pushoverService, smhiService, haService)
 
 	// Sätt upp Gin router
 	router := gin.Default()

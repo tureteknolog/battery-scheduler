@@ -13,23 +13,27 @@ import (
 )
 
 type API struct {
-	db        *db.Database
-	entsoe    *services.EntsoeService
-	pushover  *services.PushoverService
-	scheduler *services.SchedulerService
+	db            *db.Database
+	entsoe        *services.EntsoeService
+	pushover      *services.PushoverService
+	scheduler     *services.SchedulerService
+	smhi          *services.SMHIService
+	homeAssistant *services.HomeAssistantService
 }
 
 // NewAPI skapar en ny API-instans
-func NewAPI(database *db.Database, entsoe *services.EntsoeService, pushover *services.PushoverService) *API {
+func NewAPI(database *db.Database, entsoe *services.EntsoeService, pushover *services.PushoverService, smhi *services.SMHIService, ha *services.HomeAssistantService) *API {
 	// Ladda befintligt schema från databasen
 	schedule, _ := database.GetSchedule()
 	scheduler := services.NewSchedulerService(schedule)
 
 	return &API{
-		db:        database,
-		entsoe:    entsoe,
-		pushover:  pushover,
-		scheduler: scheduler,
+		db:            database,
+		entsoe:        entsoe,
+		pushover:      pushover,
+		scheduler:     scheduler,
+		smhi:          smhi,
+		homeAssistant: ha,
 	}
 }
 
@@ -100,53 +104,67 @@ func (a *API) GetCurrentMode(c *gin.Context) {
 	c.JSON(http.StatusOK, currentMode)
 }
 
-// GetPowerEstimate returnerar gissad förbrukning per kvart
+// GetPowerEstimate returnerar prognosticerad förbrukning per kvart baserat på SMHI-temperatur
 func (a *API) GetPowerEstimate(c *gin.Context) {
-	// TODO: Implementera riktig förbrukningsgissning senare
-	// För nu returnerar vi mock-data
-
 	now := time.Now()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	// Hämta väderprognos från SMHI
+	forecasts, err := a.smhi.FetchForecast()
+	if err != nil {
+		fmt.Printf("Failed to fetch SMHI forecast, using fallback: %v\n", err)
+	}
 
 	var estimates []models.PowerEstimate
 
 	for i := 0; i < 192; i++ { // 48 timmar * 4 kvartar
 		timestamp := startOfToday.Add(time.Duration(i) * 15 * time.Minute)
-		hour := timestamp.Hour()
 
 		var power float64
-		if hour >= 0 && hour < 6 {
-			power = 0.5 + float64(i%4)*0.1 // Natt: 0.5-0.8 kW
-		} else if hour >= 6 && hour < 9 {
-			power = 2.0 + float64(i%4)*0.25 // Morgon: 2-3 kW
-		} else if hour >= 9 && hour < 17 {
-			power = 1.0 + float64(i%4)*0.2 // Dag: 1-2 kW
-		} else if hour >= 17 && hour < 22 {
-			power = 3.0 + float64(i%4)*0.5 // Kväll: 3-5 kW
+		if len(forecasts) > 0 {
+			temp := a.smhi.GetTemperatureAt(forecasts, timestamp)
+			power = services.ConsumptionFromTemperature(temp)
 		} else {
-			power = 1.0 + float64(i%4)*0.2 // Sen kväll: 1-2 kW
+			// Fallback: anta 5°C
+			power = services.ConsumptionFromTemperature(5.0)
 		}
 
 		estimates = append(estimates, models.PowerEstimate{
-			Timestamp: timestamp,
-			PowerKW:   power,
+			Timestamp:   timestamp,
+			PowerKW:     power,
+			Temperature: a.getTemperatureForTimestamp(forecasts, timestamp),
 		})
 	}
 
 	c.JSON(http.StatusOK, estimates)
 }
 
-// GetBatterySoC returnerar aktuellt batteriladdtillstånd
-func (a *API) GetBatterySoC(c *gin.Context) {
-	// TODO: Hämta riktigt värde från Ferroamp/Home Assistant senare
-	// För nu returnerar vi mock-data
+// getTemperatureForTimestamp returnerar temperaturen vid en given tidpunkt, eller 0 om prognos saknas
+func (a *API) getTemperatureForTimestamp(forecasts []services.TemperatureForecast, t time.Time) *float64 {
+	if len(forecasts) == 0 {
+		return nil
+	}
+	temp := a.smhi.GetTemperatureAt(forecasts, t)
+	return &temp
+}
 
-	response := models.BatterySoCResponse{
-		Percentage: 50.0, // Mock-värde
-		Timestamp:  time.Now(),
+// GetBatterySoC returnerar aktuellt batteriladdtillstånd från Home Assistant
+func (a *API) GetBatterySoC(c *gin.Context) {
+	soc, lastChanged, err := a.homeAssistant.GetSoC()
+	if err != nil {
+		fmt.Printf("Failed to fetch SoC from Home Assistant: %v\n", err)
+		// Fallback till mock-värde
+		c.JSON(http.StatusOK, models.BatterySoCResponse{
+			Percentage: 50.0,
+			Timestamp:  time.Now(),
+		})
+		return
 	}
 
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusOK, models.BatterySoCResponse{
+		Percentage: soc,
+		Timestamp:  lastChanged,
+	})
 }
 
 // RefreshPrices hämtar nya priser från Entsoe
@@ -208,6 +226,8 @@ func (a *API) GetSettings(c *gin.Context) {
 		"pushover_user":    "",
 		"app_url":          "",
 		"battery_capacity": "42",
+		"ha_url":           "",
+		"ha_token":         "",
 	}
 
 	// Hämta faktiska värden från databas

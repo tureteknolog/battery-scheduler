@@ -17,6 +17,8 @@ services:
       - PUSHOVER_APP=${PUSHOVER_APP:-}
       - PUSHOVER_USER=${PUSHOVER_USER:-}
       - PRICE_AREA=${PRICE_AREA:-SE3}
+      - HA_URL=${HA_URL:-http://homeassistant.local:8123}
+      - HA_TOKEN=${HA_TOKEN:-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
