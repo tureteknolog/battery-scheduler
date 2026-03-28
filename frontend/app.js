@@ -450,16 +450,16 @@ function BatteryScheduler() {
         
         {/* Visuell översikt */}
         <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">Översikt: Pris, Förbrukning & Schema</h2>
-          <div className="w-full" style={{ height: '450px' }}>
-            <svg className="w-full h-full" viewBox="0 0 1200 450" preserveAspectRatio="xMidYMid meet">
+          <h2 className="text-lg font-semibold mb-4">Översikt: Pris, Förbrukning, SoC & Schema</h2>
+          <div className="w-full" style={{ height: '470px' }}>
+            <svg className="w-full h-full" viewBox="0 0 1260 470" preserveAspectRatio="xMidYMid meet">
               <defs>
                 <clipPath id="chartArea">
                   <rect x="60" y="10" width="1120" height="300" />
                 </clipPath>
               </defs>
-              
-              {/* Y-axel rutnät */}
+
+              {/* Y-axel vänster: Pris (öre/kWh) */}
               {[0, 50, 100, 150, 200, 250, 300, 350, 400].map(price => {
                 const y = 310 - (price / 400) * 300;
                 return (
@@ -471,7 +471,23 @@ function BatteryScheduler() {
                   </g>
                 );
               })}
-              
+
+              {/* Y-axel höger: kW (0-10) / SoC% (0-100) */}
+              {[0, 2, 4, 6, 8, 10].map(kw => {
+                const y = 310 - (kw / 10) * 300;
+                const socPct = kw * 10;
+                return (
+                  <g key={`right-${kw}`}>
+                    <text x="1190" y={y + 4} textAnchor="start" fontSize="11" fill="#6366f1">
+                      {kw}
+                    </text>
+                    <text x="1235" y={y + 4} textAnchor="start" fontSize="11" fill="#f59e0b">
+                      {socPct}%
+                    </text>
+                  </g>
+                );
+              })}
+
               {/* X-axel */}
               {Array.from({ length: 17 }).map((_, i) => {
                 const hour = i * 3;
@@ -492,7 +508,7 @@ function BatteryScheduler() {
                   </g>
                 );
               })}
-              
+
               {/* Prislinje */}
               <g clipPath="url(#chartArea)">
                 {prices.map((priceData, idx) => {
@@ -502,7 +518,7 @@ function BatteryScheduler() {
                   const y1 = 310 - Math.max(0, Math.min(prices[idx - 1].price, 400)) / 400 * 300;
                   const y2 = 310 - Math.max(0, Math.min(priceData.price, 400)) / 400 * 300;
                   const color = getPriceColor(priceData.price, minPriceScale, maxPriceScale);
-                  
+
                   return (
                     <line
                       key={idx}
@@ -515,15 +531,15 @@ function BatteryScheduler() {
                     />
                   );
                 })}
-                
-                {/* Förbrukningslinje */}
+
+                {/* Förbrukningslinje (skala 0-10 kW) */}
                 {consumption.map((power, idx) => {
                   if (idx === 0) return null;
                   const x1 = 60 + ((idx - 1) / consumption.length) * 1120;
                   const x2 = 60 + (idx / consumption.length) * 1120;
-                  const y1 = 310 - (consumption[idx - 1] / 5) * 300;
-                  const y2 = 310 - (power / 5) * 300;
-                  
+                  const y1 = 310 - (Math.min(consumption[idx - 1], 10) / 10) * 300;
+                  const y2 = 310 - (Math.min(power, 10) / 10) * 300;
+
                   return (
                     <line
                       key={`cons-${idx}`}
@@ -538,22 +554,44 @@ function BatteryScheduler() {
                     />
                   );
                 })}
+
+                {/* SoC-linje (skala 0-100%) */}
+                {simulateBatterySoC.map((soc, idx) => {
+                  if (idx === 0) return null;
+                  const x1 = 60 + ((idx - 1) / simulateBatterySoC.length) * 1120;
+                  const x2 = 60 + (idx / simulateBatterySoC.length) * 1120;
+                  const y1 = 310 - (simulateBatterySoC[idx - 1] / 100) * 300;
+                  const y2 = 310 - (soc / 100) * 300;
+
+                  return (
+                    <line
+                      key={`soc-${idx}`}
+                      x1={x1}
+                      y1={y1}
+                      x2={x2}
+                      y2={y2}
+                      stroke="#f59e0b"
+                      strokeWidth="2"
+                      opacity="0.8"
+                    />
+                  );
+                })}
               </g>
-              
+
               {/* Schema-band */}
               <g>
                 {prices.map((priceData, idx) => {
                   const mode = getModeForQuarter(idx);
                   const x = 60 + (idx / prices.length) * 1120;
                   const width = 1120 / prices.length;
-                  
+
                   let fillColor = '#9ca3af';
                   if (mode === 2) fillColor = '#22c55e';
                   else if (mode === 3) fillColor = '#f97316';
                   else if (mode === 4) fillColor = '#ef4444';
                   else if (mode === 5) fillColor = '#3b82f6';
                   else if (mode === 6) fillColor = '#a855f7';
-                  
+
                   return (
                     <rect
                       key={idx}
@@ -566,20 +604,23 @@ function BatteryScheduler() {
                     />
                   );
                 })}
-                
+
                 {/* Legend */}
                 <text x="60" y="375" fontSize="12" fill="#6b7280" fontWeight="bold">Pris</text>
                 <line x1="90" y1="372" x2="120" y2="372" stroke="#22c55e" strokeWidth="2" />
-                
-                <text x="140" y="375" fontSize="12" fill="#6b7280" fontWeight="bold">Förbrukning (kW)</text>
-                <line x1="230" y1="372" x2="260" y2="372" stroke="#6366f1" strokeWidth="2" strokeDasharray="4,4" />
-                
+
+                <text x="140" y="375" fontSize="12" fill="#6366f1" fontWeight="bold">Förbrukning</text>
+                <line x1="225" y1="372" x2="255" y2="372" stroke="#6366f1" strokeWidth="2" strokeDasharray="4,4" />
+
+                <text x="275" y="375" fontSize="12" fill="#f59e0b" fontWeight="bold">SoC</text>
+                <line x1="300" y1="372" x2="330" y2="372" stroke="#f59e0b" strokeWidth="2" />
+
                 {MODES.slice(0, 4).map((mode, idx) => {
                   let fillColor = '#9ca3af';
                   if (mode.id === 2) fillColor = '#22c55e';
                   else if (mode.id === 3) fillColor = '#f97316';
                   else if (mode.id === 4) fillColor = '#ef4444';
-                  
+
                   const x = 60 + idx * 120;
                   return (
                     <g key={mode.id}>
@@ -590,7 +631,7 @@ function BatteryScheduler() {
                     </g>
                   );
                 })}
-                
+
                 {MODES.slice(4).map((mode, idx) => {
                   let fillColor = mode.id === 5 ? '#3b82f6' : '#a855f7';
                   const x = 540 + idx * 120;
@@ -604,11 +645,17 @@ function BatteryScheduler() {
                   );
                 })}
               </g>
-              
+
               <text x="20" y="160" textAnchor="middle" fontSize="12" fill="#6b7280" transform="rotate(-90 20 160)">
-                Pris (öre/kWh) / Effekt (kW)
+                Pris (öre/kWh)
               </text>
-              <text x="620" y="445" textAnchor="middle" fontSize="12" fill="#6b7280">
+              <text x="1210" y="100" textAnchor="middle" fontSize="11" fill="#6366f1" transform="rotate(90 1210 100)">
+                kW
+              </text>
+              <text x="1250" y="100" textAnchor="middle" fontSize="11" fill="#f59e0b" transform="rotate(90 1250 100)">
+                SoC%
+              </text>
+              <text x="620" y="460" textAnchor="middle" fontSize="12" fill="#6b7280">
                 Tid
               </text>
             </svg>
