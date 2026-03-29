@@ -24,30 +24,14 @@ const getChargePower = (soc) => {
   return -2.0;
 };
 
-// Färgskala för priser
-const getPriceColor = (price, minPrice, maxPrice) => {
-  if (price < 0) {
-    const intensity = Math.min(Math.abs(price) / 50, 1);
-    const blue = Math.round(100 + intensity * 155);
-    return `rgb(100, 150, ${blue})`;
-  } else if (price > maxPrice) {
-    return 'rgb(139, 69, 19)';
-  } else {
-    const ratio = Math.min(price / maxPrice, 1);
-    const red = Math.round(34 + ratio * 205);
-    const green = Math.round(197 - ratio * 150);
-    return `rgb(${red}, ${green}, 100)`;
-  }
-};
 
 function BatteryScheduler() {
   const [prices, setPrices] = useState([]);
   const [consumption, setConsumption] = useState([]);
   const [schedule, setSchedule] = useState([]);
-  const [cheapestQuarters, setCheapestQuarters] = useState(12);
-  const [mostExpensiveQuarters, setMostExpensiveQuarters] = useState(8);
-  const [minPriceScale, setMinPriceScale] = useState(-50);
-  const [maxPriceScale, setMaxPriceScale] = useState(400);
+  const [priceYMin, setPriceYMin] = useState(0);
+  const [priceYMax, setPriceYMax] = useState(400);
+  const [priceDiffD, setPriceDiffD] = useState(50);
   const [currentSoC, setCurrentSoC] = useState(50);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -234,13 +218,26 @@ function BatteryScheduler() {
     return result;
   }, [schedule, prices]);
   
-  const sortedByPrice = useMemo(() => {
-    return prices.map((p, idx) => ({ ...p, idx }))
+  // Beräkna laddnings- och urladdningskvartar baserat på prisdifferens D
+  const { chargeIndices, dischargeIndices } = useMemo(() => {
+    const sorted = prices
+      .map((p, idx) => ({ price: p.price, idx }))
+      .filter(p => p.idx >= currentQuarterIndex)
       .sort((a, b) => a.price - b.price);
-  }, [prices]);
-  
-  const cheapestIndices = new Set(sortedByPrice.slice(0, cheapestQuarters).map(p => p.idx));
-  const expensiveIndices = new Set(sortedByPrice.slice(-mostExpensiveQuarters).map(p => p.idx));
+
+    const charge = new Set();
+    const discharge = new Set();
+
+    let lo = 0, hi = sorted.length - 1;
+    while (lo < hi && sorted[hi].price - sorted[lo].price >= priceDiffD) {
+      charge.add(sorted[lo].idx);
+      discharge.add(sorted[hi].idx);
+      lo++;
+      hi--;
+    }
+
+    return { chargeIndices: charge, dischargeIndices: discharge };
+  }, [prices, currentQuarterIndex, priceDiffD]);
   
   const validateChargerOverlap = (startIdx, endIdx, mode) => {
     if (mode !== 5 && mode !== 6) return null;
@@ -402,65 +399,44 @@ function BatteryScheduler() {
             </div>
           </div>
           
-          <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <div className="grid md:grid-cols-3 gap-4">
             <div>
-              <label className="flex items-center gap-2 text-sm font-medium mb-2">
-                📉 {cheapestQuarters} billigaste kvartar
+              <label className="text-sm font-medium mb-2 block">
+                Prisskala: {priceYMin} - {priceYMax} öre
               </label>
-              <input 
-                type="range" 
-                min="0" 
-                max="48" 
-                value={cheapestQuarters}
-                onChange={(e) => setCheapestQuarters(parseInt(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            <div>
-              <label className="flex items-center gap-2 text-sm font-medium mb-2">
-                📈 {mostExpensiveQuarters} dyraste kvartar
-              </label>
-              <input 
-                type="range" 
-                min="0" 
-                max="48" 
-                value={mostExpensiveQuarters}
-                onChange={(e) => setMostExpensiveQuarters(parseInt(e.target.value))}
-                className="w-full"
-              />
-            </div>
-          </div>
-          
-          <div className="border-t pt-4">
-            <div className="flex items-center gap-2 text-sm font-medium mb-3">
-              🎨 Prisfärgskala
-            </div>
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm mb-2 block">
-                  Min (blå) till Noll (grön): {minPriceScale} öre
-                </label>
-                <input 
-                  type="range" 
-                  min="-100" 
-                  max="0" 
-                  value={minPriceScale}
-                  onChange={(e) => setMinPriceScale(parseInt(e.target.value))}
+              <div className="flex gap-2 items-center">
+                <input
+                  type="range" min="-50" max="500" step="50"
+                  value={priceYMin}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value);
+                    if (v < priceYMax) setPriceYMin(v);
+                  }}
+                  className="w-full"
+                />
+                <input
+                  type="range" min="50" max="1000" step="50"
+                  value={priceYMax}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value);
+                    if (v > priceYMin) setPriceYMax(v);
+                  }}
                   className="w-full"
                 />
               </div>
-              <div>
-                <label className="text-sm mb-2 block">
-                  Noll (grön) till Max (röd): {maxPriceScale} öre
-                </label>
-                <input 
-                  type="range" 
-                  min="100" 
-                  max="600" 
-                  value={maxPriceScale}
-                  onChange={(e) => setMaxPriceScale(parseInt(e.target.value))}
-                  className="w-full"
-                />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-2 block">
+                Prisdifferens (D): {priceDiffD} öre
+              </label>
+              <input
+                type="range" min="0" max="300" step="5"
+                value={priceDiffD}
+                onChange={(e) => setPriceDiffD(parseInt(e.target.value))}
+                className="w-full"
+              />
+              <div className="text-xs text-gray-500 mt-1">
+                {chargeIndices.size} kvartar laddning / {dischargeIndices.size} kvartar urladdning
               </div>
             </div>
           </div>
@@ -515,18 +491,26 @@ function BatteryScheduler() {
                   </clipPath>
                 </defs>
 
-                {/* Y-axel vänster: Pris (öre/kWh) */}
-                {[0, 50, 100, 150, 200, 250, 300, 350, 400].map(price => {
-                  const y = 310 - (price / 400) * 300;
-                  return (
-                    <g key={price}>
-                      <line x1="60" y1={y} x2="1180" y2={y} stroke="#e5e7eb" strokeWidth="1" />
-                      <text x="50" y={y + 4} textAnchor="end" fontSize="12" fill="#6b7280">
-                        {price}
-                      </text>
-                    </g>
-                  );
-                })}
+                {/* Y-axel vänster: Pris (öre/kWh), dynamisk skala */}
+                {(() => {
+                  const range = priceYMax - priceYMin;
+                  const step = range <= 200 ? 25 : range <= 500 ? 50 : 100;
+                  const ticks = [];
+                  for (let p = Math.ceil(priceYMin / step) * step; p <= priceYMax; p += step) {
+                    ticks.push(p);
+                  }
+                  return ticks.map(price => {
+                    const y = 310 - ((price - priceYMin) / (priceYMax - priceYMin)) * 300;
+                    return (
+                      <g key={price}>
+                        <line x1="60" y1={y} x2="1180" y2={y} stroke="#e5e7eb" strokeWidth="1" />
+                        <text x="50" y={y + 4} textAnchor="end" fontSize="12" fill="#6b7280">
+                          {price}
+                        </text>
+                      </g>
+                    );
+                  });
+                })()}
 
                 {/* Y-axel höger: kW (0-10) / SoC% (0-100) */}
                 {[0, 2, 4, 6, 8, 10].map(kw => {
@@ -559,18 +543,32 @@ function BatteryScheduler() {
                   </g>
                 ))}
 
-                {/* Prislinje */}
+                {/* Ladda/Urladda-bakgrund + Prislinje (steg) */}
                 <g clipPath="url(#chartArea)">
+                  {/* Bakgrundsfärg för ladda/urladda-kvartar */}
                   {prices.map((priceData, idx) => {
-                    if (idx <= cStart) return null;
-                    const x1 = toX(idx - 1);
-                    const x2 = toX(idx);
-                    const y1 = 310 - Math.max(0, Math.min(prices[idx - 1].price, 400)) / 400 * 300;
-                    const y2 = 310 - Math.max(0, Math.min(priceData.price, 400)) / 400 * 300;
-                    const color = getPriceColor(priceData.price, minPriceScale, maxPriceScale);
+                    if (idx < cStart) return null;
+                    const isCharge = chargeIndices.has(idx);
+                    const isDischarge = dischargeIndices.has(idx);
+                    if (!isCharge && !isDischarge) return null;
+                    const x = toX(idx);
+                    const w = 1120 / cLen;
+                    return (
+                      <rect key={`bg-${idx}`} x={x} y="10" width={w} height="300"
+                        fill={isCharge ? '#22c55e' : '#f97316'} opacity="0.15" />
+                    );
+                  })}
+
+                  {/* Prislinje som stegfunktion */}
+                  {prices.map((priceData, idx) => {
+                    if (idx < cStart) return null;
+                    const x1 = toX(idx);
+                    const x2 = idx + 1 < prices.length ? toX(idx + 1) : toX(idx) + 1120 / cLen;
+                    const yRange = priceYMax - priceYMin;
+                    const y = 310 - ((Math.max(priceYMin, Math.min(priceYMax, priceData.price)) - priceYMin) / yRange) * 300;
 
                     return (
-                      <line key={idx} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth="2" />
+                      <line key={`price-${idx}`} x1={x1} y1={y} x2={x2} y2={y} stroke="#374151" strokeWidth="2" />
                     );
                   })}
 
@@ -652,14 +650,20 @@ function BatteryScheduler() {
 
                 {/* Legend */}
                 <g>
-                  <text x="60" y="375" fontSize="12" fill="#6b7280" fontWeight="bold">Pris</text>
-                  <line x1="90" y1="372" x2="120" y2="372" stroke="#22c55e" strokeWidth="2" />
+                  <text x="60" y="375" fontSize="12" fill="#374151" fontWeight="bold">Pris</text>
+                  <line x1="90" y1="372" x2="120" y2="372" stroke="#374151" strokeWidth="2" />
 
                   <text x="140" y="375" fontSize="12" fill="#6366f1" fontWeight="bold">Förbrukning</text>
                   <line x1="225" y1="372" x2="255" y2="372" stroke="#6366f1" strokeWidth="2" strokeDasharray="4,4" />
 
                   <text x="275" y="375" fontSize="12" fill="#f59e0b" fontWeight="bold">SoC</text>
                   <line x1="300" y1="372" x2="330" y2="372" stroke="#f59e0b" strokeWidth="2" />
+
+                  <rect x="350" y="363" width="20" height="16" fill="#22c55e" opacity="0.3" />
+                  <text x="375" y="375" fontSize="12" fill="#374151">Ladda</text>
+
+                  <rect x="420" y="363" width="20" height="16" fill="#f97316" opacity="0.3" />
+                  <text x="445" y="375" fontSize="12" fill="#374151">Urladda</text>
 
                   {MODES.slice(0, 4).map((mode, idx) => {
                     let fillColor = '#9ca3af';
@@ -790,14 +794,14 @@ function BatteryScheduler() {
                 {prices.map((priceData, idx) => {
                   if (idx < currentQuarterIndex) return null;
                   const currentMode = getModeForQuarter(idx);
-                  const isCheap = cheapestIndices.has(idx);
-                  const isExpensive = expensiveIndices.has(idx);
-                  const isFirstOfDay = idx === 0 || idx === 96;
-                  
-                  const priceColor = getPriceColor(priceData.price, minPriceScale, maxPriceScale);
+                  const isCharge = chargeIndices.has(idx);
+                  const isDischarge = dischargeIndices.has(idx);
+                  const isFirstOfDay = idx === 0 || idx === 96 || idx === currentQuarterIndex;
+
                   const soc = simulateBatterySoC[idx];
                   const socColor = soc === null ? 'bg-gray-50' : soc <= 20 ? 'bg-red-100' : soc <= 50 ? 'bg-yellow-100' : 'bg-green-100';
-                  
+                  const priceBg = isCharge ? 'bg-green-100' : isDischarge ? 'bg-orange-100' : '';
+
                   return (
                     <tr key={idx} className="border-t hover:bg-gray-50">
                       <td className={`px-3 py-2 text-left font-bold border-r sticky left-0 z-10 ${isFirstOfDay ? 'text-lg bg-white' : 'text-xs text-gray-400 bg-gray-50'}`}>
@@ -806,13 +810,8 @@ function BatteryScheduler() {
                       <td className="px-3 py-2 text-left font-mono border-r text-xs">
                         {formatTime(priceData.timestamp)}
                       </td>
-                      <td 
-                        className="px-3 py-2 text-center font-semibold border-r relative text-xs"
-                        style={{ backgroundColor: priceColor, color: priceData.price < 0 || priceData.price > 200 ? 'white' : 'black' }}
-                      >
+                      <td className={`px-3 py-2 text-center font-semibold border-r text-xs ${priceBg}`}>
                         {priceData.price}
-                        {isCheap && <span className="absolute top-0 right-0 text-xs">💰</span>}
-                        {isExpensive && <span className="absolute top-0 right-0 text-xs">🔥</span>}
                       </td>
                       <td className="px-2 py-2 text-center border-r text-xs">
                         {consumption[idx] ? consumption[idx].toFixed(1) : '-'}
