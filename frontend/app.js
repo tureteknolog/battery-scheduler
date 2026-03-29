@@ -334,6 +334,38 @@ function BatteryScheduler() {
     dragStartRef.current = null;
   };
   
+  const handleAutoFill = () => {
+    if (chargeIndices.size === 0 && dischargeIndices.size === 0) {
+      alert('Inga kvartar att fylla i. Justera prisdifferensen (D).');
+      return;
+    }
+
+    // Bygg en modkarta för varje kvart från nu och framåt
+    const modeMap = new Map();
+    for (let i = currentQuarterIndex; i < prices.length; i++) {
+      if (chargeIndices.has(i)) {
+        modeMap.set(i, 2); // Ladda
+      } else if (dischargeIndices.has(i)) {
+        modeMap.set(i, 3); // Urladda
+      } else {
+        modeMap.set(i, 1); // Passiv
+      }
+    }
+
+    // Konvertera till breakpoints (bara vid lägesändringar)
+    const newSchedule = [];
+    let prevMode = null;
+    for (let i = currentQuarterIndex; i < prices.length; i++) {
+      const mode = modeMap.get(i);
+      if (mode !== prevMode) {
+        newSchedule.push({ timestamp: prices[i].timestamp, mode });
+        prevMode = mode;
+      }
+    }
+
+    setSchedule(newSchedule);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -480,8 +512,8 @@ function BatteryScheduler() {
             }
 
             return (
-            <div className="w-full" style={{ height: '470px', position: 'relative' }}>
-              <svg ref={svgRef} className="w-full h-full" viewBox="0 0 1260 470" preserveAspectRatio="xMidYMid meet"
+            <div className="w-full" style={{ height: '560px', position: 'relative' }}>
+              <svg ref={svgRef} className="w-full h-full" viewBox="0 0 1260 560" preserveAspectRatio="xMidYMid meet"
                 onMouseMove={handleChartMouseMove}
                 onMouseLeave={() => setHoverIdx(null)}
               >
@@ -601,26 +633,52 @@ function BatteryScheduler() {
                   })}
                 </g>
 
-                {/* Schema-band */}
-                <g>
-                  {prices.map((priceData, idx) => {
-                    if (idx < cStart) return null;
-                    const mode = getModeForQuarter(idx);
-                    const x = toX(idx);
-                    const width = 1120 / cLen;
+                {/* Klickbara lägesrader */}
+                {(() => {
+                  const modeColors = { 1: '#9ca3af', 2: '#22c55e', 3: '#f97316', 4: '#ef4444', 5: '#3b82f6', 6: '#a855f7' };
+                  const rowH = 20;
+                  const rowGap = 1;
+                  const rowsY = 325;
+                  const w = 1120 / cLen;
 
-                    let fillColor = '#9ca3af';
-                    if (mode === 2) fillColor = '#22c55e';
-                    else if (mode === 3) fillColor = '#f97316';
-                    else if (mode === 4) fillColor = '#ef4444';
-                    else if (mode === 5) fillColor = '#3b82f6';
-                    else if (mode === 6) fillColor = '#a855f7';
+                  return (
+                    <g>
+                      {MODES.map((mode, modeRow) => {
+                        const rowY = rowsY + modeRow * (rowH + rowGap);
+                        return (
+                          <g key={`moderow-${mode.id}`}>
+                            {/* Lägesnamn */}
+                            <text x="55" y={rowY + 14} textAnchor="end" fontSize="10" fill="#6b7280">
+                              {mode.name}
+                            </text>
+                            {/* Kvartar */}
+                            {prices.map((priceData, idx) => {
+                              if (idx < cStart) return null;
+                              const x = toX(idx);
+                              const activeMode = getModeForQuarter(idx);
+                              const isActive = activeMode === mode.id;
+                              const isDragTarget = draggedQuarters.has(idx) && dragMode === mode.id;
 
-                    return (
-                      <rect key={idx} x={x} y="320" width={width} height="30" fill={fillColor} opacity="0.8" />
-                    );
-                  })}
-                </g>
+                              return (
+                                <rect
+                                  key={`mr-${mode.id}-${idx}`}
+                                  x={x} y={rowY} width={w} height={rowH}
+                                  fill={isActive || isDragTarget ? modeColors[mode.id] : '#f3f4f6'}
+                                  opacity={isActive || isDragTarget ? 0.9 : 0.4}
+                                  stroke={isDragTarget ? '#3b82f6' : 'white'}
+                                  strokeWidth={isDragTarget ? 1.5 : 0.5}
+                                  style={{ cursor: 'pointer' }}
+                                  onMouseDown={(e) => { e.preventDefault(); handleMouseDown(idx, mode.id); }}
+                                  onMouseEnter={() => handleMouseEnter(idx)}
+                                />
+                              );
+                            })}
+                          </g>
+                        );
+                      })}
+                    </g>
+                  );
+                })()}
 
                 {/* Hover-linje och tooltip */}
                 {hoverIdx !== null && hoverIdx >= cStart && hoverIdx < prices.length && (
@@ -650,50 +708,20 @@ function BatteryScheduler() {
 
                 {/* Legend */}
                 <g>
-                  <text x="60" y="375" fontSize="12" fill="#374151" fontWeight="bold">Pris</text>
-                  <line x1="90" y1="372" x2="120" y2="372" stroke="#374151" strokeWidth="2" />
+                  <text x="60" y="470" fontSize="12" fill="#374151" fontWeight="bold">Pris</text>
+                  <line x1="90" y1="467" x2="120" y2="467" stroke="#374151" strokeWidth="2" />
 
-                  <text x="140" y="375" fontSize="12" fill="#6366f1" fontWeight="bold">Förbrukning</text>
-                  <line x1="225" y1="372" x2="255" y2="372" stroke="#6366f1" strokeWidth="2" strokeDasharray="4,4" />
+                  <text x="140" y="470" fontSize="12" fill="#6366f1" fontWeight="bold">Förbrukning</text>
+                  <line x1="225" y1="467" x2="255" y2="467" stroke="#6366f1" strokeWidth="2" strokeDasharray="4,4" />
 
-                  <text x="275" y="375" fontSize="12" fill="#f59e0b" fontWeight="bold">SoC</text>
-                  <line x1="300" y1="372" x2="330" y2="372" stroke="#f59e0b" strokeWidth="2" />
+                  <text x="275" y="470" fontSize="12" fill="#f59e0b" fontWeight="bold">SoC</text>
+                  <line x1="300" y1="467" x2="330" y2="467" stroke="#f59e0b" strokeWidth="2" />
 
-                  <rect x="350" y="363" width="20" height="16" fill="#22c55e" opacity="0.3" />
-                  <text x="375" y="375" fontSize="12" fill="#374151">Ladda</text>
+                  <rect x="350" y="458" width="20" height="16" fill="#22c55e" opacity="0.3" />
+                  <text x="375" y="470" fontSize="12" fill="#374151">Ladda</text>
 
-                  <rect x="420" y="363" width="20" height="16" fill="#f97316" opacity="0.3" />
-                  <text x="445" y="375" fontSize="12" fill="#374151">Urladda</text>
-
-                  {MODES.slice(0, 4).map((mode, idx) => {
-                    let fillColor = '#9ca3af';
-                    if (mode.id === 2) fillColor = '#22c55e';
-                    else if (mode.id === 3) fillColor = '#f97316';
-                    else if (mode.id === 4) fillColor = '#ef4444';
-
-                    const x = 60 + idx * 120;
-                    return (
-                      <g key={mode.id}>
-                        <rect x={x} y="395" width="20" height="20" fill={fillColor} opacity="0.8" />
-                        <text x={x + 25} y="410" fontSize="11" fill="#374151">
-                          {mode.name}
-                        </text>
-                      </g>
-                    );
-                  })}
-
-                  {MODES.slice(4).map((mode, idx) => {
-                    let fillColor = mode.id === 5 ? '#3b82f6' : '#a855f7';
-                    const x = 540 + idx * 120;
-                    return (
-                      <g key={mode.id}>
-                        <rect x={x} y="395" width="20" height="20" fill={fillColor} opacity="0.8" />
-                        <text x={x + 25} y="410" fontSize="11" fill="#374151">
-                          {mode.name}
-                        </text>
-                      </g>
-                    );
-                  })}
+                  <rect x="420" y="458" width="20" height="16" fill="#f97316" opacity="0.3" />
+                  <text x="445" y="470" fontSize="12" fill="#374151">Urladda</text>
                 </g>
 
                 <text x="20" y="160" textAnchor="middle" fontSize="12" fill="#6b7280" transform="rotate(-90 20 160)">
@@ -705,13 +733,19 @@ function BatteryScheduler() {
                 <text x="1250" y="100" textAnchor="middle" fontSize="11" fill="#f59e0b" transform="rotate(90 1250 100)">
                   SoC%
                 </text>
-                <text x="620" y="460" textAnchor="middle" fontSize="12" fill="#6b7280">
-                  Tid
-                </text>
               </svg>
             </div>
             );
           })()}
+          {/* Auto-fill knapp */}
+          <div className="mt-3 flex gap-3">
+            <button
+              onClick={handleAutoFill}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Fyll i schema (D={priceDiffD} öre: {chargeIndices.size} ladda / {dischargeIndices.size} urladda)
+            </button>
+          </div>
         </div>
 
         {/* Summering per läge */}
