@@ -298,31 +298,46 @@ function BatteryScheduler() {
         const quarterIndex = sortedQuarters[0];
         const clickedTime = prices[quarterIndex].timestamp;
         const nextTime = new Date(clickedTime.getTime() + 15 * 60 * 1000);
-        
-        let newSchedule = schedule.filter(s => 
+
+        let newSchedule = schedule.filter(s =>
           s.timestamp < clickedTime || s.timestamp >= nextTime
         );
-        
+
         newSchedule.push({ timestamp: clickedTime, mode: dragMode });
-        newSchedule.push({ timestamp: nextTime, mode: 1 });
-        
+
+        // Only add mode=1 reset if there isn't already a non-Passive change within the drag range.
+        // Without this, dragging over one period would wipe out any existing mode change inside it,
+        // causing all following periods to default back to "Passiv".
+        const hasInnerChange = schedule.some(s => s.timestamp >= clickedTime && s.timestamp < nextTime && s.mode !== 1);
+        if (!hasInnerChange) {
+          newSchedule.push({ timestamp: nextTime, mode: 1 });
+        }
+
         newSchedule.sort((a, b) => a.timestamp - b.timestamp);
         setSchedule(newSchedule);
       } else {
         const firstQuarter = sortedQuarters[0];
         const lastQuarter = sortedQuarters[sortedQuarters.length - 1];
-        
+
         const firstTime = prices[firstQuarter].timestamp;
         const lastTime = prices[lastQuarter].timestamp;
         const nextTime = new Date(lastTime.getTime() + 15 * 60 * 1000);
-        
-        let newSchedule = schedule.filter(s => 
+
+        // Check if the drag range already had a non-Passive change inside it.
+        // If so, preserving mode=1 would wipe it out — keep whatever was there instead.
+        const hasInnerChange = schedule.some(s => s.timestamp >= firstTime && s.timestamp < nextTime && s.mode !== 1);
+
+        let newSchedule = schedule.filter(s =>
           s.timestamp < firstTime || s.timestamp >= nextTime
         );
-        
+
         newSchedule.push({ timestamp: firstTime, mode: dragMode });
-        newSchedule.push({ timestamp: nextTime, mode: 1 });
-        
+
+        // Don't force a mode=1 reset inside the drag range if there's already a real change there.
+        if (!hasInnerChange) {
+          newSchedule.push({ timestamp: nextTime, mode: 1 });
+        }
+
         newSchedule.sort((a, b) => a.timestamp - b.timestamp);
         setSchedule(newSchedule);
       }
