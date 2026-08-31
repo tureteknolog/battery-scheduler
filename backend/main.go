@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -125,55 +126,11 @@ func main() {
 
 	// Kör varje dag kl 13:05 (när Nordpool släpper morgondagens priser)
 	c.AddFunc("5 13 * * *", func() {
-		log.Println("Running scheduled price fetch...")
-
-		now := time.Now()
-		startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-		endOfTomorrow := startOfToday.Add(48 * time.Hour)
-
-		prices, err := entsoeService.FetchPrices(startOfToday, endOfTomorrow)
-		if err != nil {
-			log.Printf("Failed to fetch prices from Entsoe: %v", err)
-			return // Avbryt - spara INTE mock-data till databasen
-		}
-
-		if err := database.SavePrices(prices); err != nil {
-			log.Printf("Failed to save prices: %v", err)
-			return
-		}
-
-		log.Printf("Successfully fetched and saved %d prices", len(prices))
-
-		// Beräkna statistik
-		if len(prices) > 0 {
-			var sum, min, max int
-			min = prices[0].PriceOre
-			max = prices[0].PriceOre
-
-			for _, p := range prices {
-				sum += p.PriceOre
-				if p.PriceOre < min {
-					min = p.PriceOre
-				}
-				if p.PriceOre > max {
-					max = p.PriceOre
-				}
-			}
-
-			avg := sum / len(prices)
-
-			// Skicka Pushover-notis
-			appURL, _ := database.GetSetting("app_url")
-			if err := pushoverService.SendPriceUpdateNotification(avg, min, max, appURL); err != nil {
-				log.Printf("Failed to send Pushover notification: %v", err)
-			} else {
-				log.Println("Pushover notification sent successfully")
-			}
-		}
+		runScheduledPriceFetch(database, entsoeService, pushoverService)
 	})
 
 	c.Start()
-	log.Println("Cron scheduler started (price fetch at 13:05 daily)")
+	log.Printf("Cron scheduler started (price fetch at 13:05 daily, up to %d attempts)", priceFetchAttempts)
 
 	// Starta servern
 	port := os.Getenv("PORT")
@@ -184,5 +141,71 @@ func main() {
 	log.Printf("Starting server on port %s", port)
 	if err := router.Run(":" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
+	}
+}
+
+const (
+	// Entsoe kan vara nere för underhåll när priserna släpps, så försök igen med
+	// 5, 10, 20 och 40 minuters mellanrum - drygt en timme totalt, vilket ger god
+	// marginal till kvällens dyra timmar.
+	priceFetchAttempts  = 5
+	priceFetchBaseDelay = 5 * time.Minute
+)
+
+// runScheduledPriceFetch hämtar morgondagens priser, sparar dem och notifierar
+// via Pushover - både när det gick bra och när det inte gjorde det.
+func runScheduledPriceFetch(database *db.Database, entsoe *services.EntsoeService, pushover *services.PushoverService) {
+	log.Println("Running scheduled price fetch...")
+
+	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	endOfTomorrow := startOfToday.Add(48 * time.Hour)
+
+	appURL, _ := database.GetSetting("app_url")
+
+	notifyFailure := func(summary string, cause error) {
+		log.Printf("%s %v", summary, cause)
+		if err := pushover.SendPriceFetchFailedNotification(summary, cause, appURL); err != nil {
+			log.Printf("Failed to send Pushover failure notification: %v", err)
+		} else {
+			log.Println("Pushover failure notification sent")
+		}
+	}
+
+	prices, err := entsoe.FetchPricesWithRetry(startOfToday, endOfTomorrow, priceFetchAttempts, priceFetchBaseDelay)
+	if err != nil {
+		notifyFailure(fmt.Sprintf("Kunde inte hämta elpriser från Entsoe efter %d försök.", priceFetchAttempts), err)
+		return // Avbryt - spara INTE mock-data till databasen
+	}
+
+	if err := database.SavePrices(prices); err != nil {
+		notifyFailure("Priserna hämtades men kunde inte sparas i databasen.", err)
+		return
+	}
+
+	log.Printf("Successfully fetched and saved %d prices", len(prices))
+
+	// Beräkna statistik
+	var sum, min, max int
+	min = prices[0].PriceOre
+	max = prices[0].PriceOre
+
+	for _, p := range prices {
+		sum += p.PriceOre
+		if p.PriceOre < min {
+			min = p.PriceOre
+		}
+		if p.PriceOre > max {
+			max = p.PriceOre
+		}
+	}
+
+	avg := sum / len(prices)
+
+	// Skicka Pushover-notis
+	if err := pushover.SendPriceUpdateNotification(avg, min, max, appURL); err != nil {
+		log.Printf("Failed to send Pushover notification: %v", err)
+	} else {
+		log.Println("Pushover notification sent successfully")
 	}
 }

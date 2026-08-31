@@ -2,18 +2,61 @@ package services
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"battery-scheduler/models"
 )
 
 type EntsoeService struct {
-	token string
-	area  string // SE1, SE2, SE3, SE4
+	token   string
+	area    string // SE1, SE2, SE3, SE4
+	baseURL string
+	client  *http.Client
+}
+
+// entsoeAPIURL är Entsoes Transparency Platform-endpoint
+const entsoeAPIURL = "https://web-api.tp.entsoe.eu/api"
+
+// ErrMissingToken returneras när Entsoe-token inte är konfigurerad
+var ErrMissingToken = errors.New("Entsoe API token saknas - lägg till i settings")
+
+// ErrNoData returneras när Entsoe svarar utan prisdata, t.ex. när morgondagens
+// priser ännu inte är publicerade
+var ErrNoData = errors.New("Entsoe svarade utan prisdata")
+
+// HTTPStatusError är ett HTTP-fel från Entsoe med statuskoden bevarad, så att
+// anroparen kan skilja tillfälliga fel (5xx, 429) från permanenta (t.ex. 401)
+type HTTPStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	// Svaret kan vara en hel HTML-sida - t.ex. underhållssidan - så korta ner
+	// den, annars dränker den både loggen och Pushover-notisen
+	return fmt.Sprintf("Entsoe API error (status %d): %s", e.StatusCode, truncate(strings.TrimSpace(e.Body), 200))
+}
+
+// Retryable säger om felet är värt att försöka igen
+func (e *HTTPStatusError) Retryable() bool {
+	return e.StatusCode >= 500 || e.StatusCode == http.StatusTooManyRequests
+}
+
+// truncate kortar ner en sträng till max tecken (inte bytes, så flerbytetecken
+// inte klipps mitt itu)
+func truncate(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "..."
 }
 
 // XML-strukturer för Entsoe API-svar
@@ -44,15 +87,69 @@ type Point struct {
 // NewEntsoeService skapar en ny Entsoe-service
 func NewEntsoeService(token, area string) *EntsoeService {
 	return &EntsoeService{
-		token: token,
-		area:  area,
+		token:   token,
+		area:    area,
+		baseURL: entsoeAPIURL,
+		// Timeout så att ett hängande anrop inte blockerar cron-jobbet i evighet
+		client: &http.Client{Timeout: 60 * time.Second},
 	}
+}
+
+// FetchPricesWithRetry hämtar priser och gör om försöket med dubblad fördröjning
+// när felet är tillfälligt (5xx, 429, nätverksfel, ännu opublicerad data).
+// Permanenta fel - saknad eller ogiltig token - avbryter direkt.
+func (e *EntsoeService) FetchPricesWithRetry(from, to time.Time, attempts int, baseDelay time.Duration) ([]models.Price, error) {
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	var lastErr error
+	delay := baseDelay
+
+	for attempt := 1; attempt <= attempts; attempt++ {
+		prices, err := e.FetchPrices(from, to)
+		if err == nil {
+			if attempt > 1 {
+				log.Printf("Entsoe: prishämtningen lyckades på försök %d/%d", attempt, attempts)
+			}
+			return prices, nil
+		}
+
+		lastErr = err
+		if !retryable(err) {
+			return nil, fmt.Errorf("permanent fel från Entsoe: %w", err)
+		}
+		if attempt == attempts {
+			break
+		}
+
+		log.Printf("Entsoe: försök %d/%d misslyckades (%v) - nytt försök om %s", attempt, attempts, err, delay)
+		time.Sleep(delay)
+		delay *= 2
+	}
+
+	return nil, fmt.Errorf("gav upp efter %d försök: %w", attempts, lastErr)
+}
+
+// retryable avgör om ett fel kan tänkas gå över av sig självt
+func retryable(err error) bool {
+	if errors.Is(err, ErrMissingToken) {
+		return false
+	}
+
+	var httpErr *HTTPStatusError
+	if errors.As(err, &httpErr) {
+		return httpErr.Retryable()
+	}
+
+	// Nätverksfel, avbrutna svar och ofullständiga dokument går ofta över
+	return true
 }
 
 // FetchPrices hämtar kvartspriser från Entsoe för ett datumintervall
 func (e *EntsoeService) FetchPrices(from, to time.Time) ([]models.Price, error) {
 	if e.token == "" {
-		return nil, fmt.Errorf("Entsoe API token saknas - lägg till i settings")
+		return nil, ErrMissingToken
 	}
 
 	// Entsoe använder UTC
@@ -74,7 +171,7 @@ func (e *EntsoeService) FetchPrices(from, to time.Time) ([]models.Price, error) 
 
 	// Bygg URL
 	url := fmt.Sprintf(
-		"https://web-api.tp.entsoe.eu/api?"+
+		e.baseURL+"?"+
 			"securityToken=%s"+
 			"&documentType=A44"+
 			"&in_Domain=%s"+
@@ -85,7 +182,7 @@ func (e *EntsoeService) FetchPrices(from, to time.Time) ([]models.Price, error) 
 	)
 
 	// Hämta data
-	resp, err := http.Get(url)
+	resp, err := e.client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch from Entsoe: %w", err)
 	}
@@ -93,7 +190,7 @@ func (e *EntsoeService) FetchPrices(from, to time.Time) ([]models.Price, error) 
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Entsoe API error (status %d): %s", resp.StatusCode, string(body))
+		return nil, &HTTPStatusError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 
 	// Parsa XML
@@ -140,6 +237,13 @@ func (e *EntsoeService) FetchPrices(from, to time.Time) ([]models.Price, error) 
 				Area:      e.area,
 			})
 		}
+	}
+
+	// Ett svar utan prisdata (t.ex. ett Acknowledgement-dokument när morgondagens
+	// priser inte är publicerade än) ska räknas som ett fel - annars sparas noll
+	// priser och hämtningen ser ut att ha lyckats
+	if len(prices) == 0 {
+		return nil, ErrNoData
 	}
 
 	// Sort prices by timestamp and fill any gaps with interpolated values

@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 type PushoverService struct {
 	appToken string
 	userKey  string
+	apiURL   string
 }
+
+// pushoverAPIURL är Pushovers endpoint för att skicka meddelanden
+const pushoverAPIURL = "https://api.pushover.net/1/messages.json"
 
 type PushoverMessage struct {
 	Token    string `json:"token"`
@@ -26,11 +31,20 @@ func NewPushoverService(appToken, userKey string) *PushoverService {
 	return &PushoverService{
 		appToken: appToken,
 		userKey:  userKey,
+		apiURL:   pushoverAPIURL,
 	}
 }
 
-// SendNotification skickar en push-notis via Pushover
+// pushoverClient har timeout så att en notis inte kan hänga sig fast
+var pushoverClient = &http.Client{Timeout: 30 * time.Second}
+
+// SendNotification skickar en push-notis via Pushover med normal prioritet
 func (p *PushoverService) SendNotification(message, title, url string) error {
+	return p.SendNotificationWithPriority(message, title, url, 0)
+}
+
+// SendNotificationWithPriority skickar en push-notis med angiven Pushover-prioritet
+func (p *PushoverService) SendNotificationWithPriority(message, title, url string, priority int) error {
 	if p.appToken == "" || p.userKey == "" {
 		return fmt.Errorf("Pushover credentials saknas - konfigurera i settings")
 	}
@@ -41,7 +55,7 @@ func (p *PushoverService) SendNotification(message, title, url string) error {
 		Message:  message,
 		Title:    title,
 		URL:      url,
-		Priority: 0, // Normal priority
+		Priority: priority,
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -49,8 +63,8 @@ func (p *PushoverService) SendNotification(message, title, url string) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	resp, err := http.Post(
-		"https://api.pushover.net/1/messages.json",
+	resp, err := pushoverClient.Post(
+		p.apiURL,
 		"application/json",
 		bytes.NewBuffer(jsonData),
 	)
@@ -74,4 +88,16 @@ func (p *PushoverService) SendPriceUpdateNotification(avgPrice int, minPrice int
 	)
 
 	return p.SendNotification(message, "Batteristyrning", appURL)
+}
+
+// SendPriceFetchFailedNotification varnar när prishämtningen inte gick igenom.
+// Prioritet 1 (hög): utan nya priser går schemat på gamla data, så notisen ska
+// ta sig förbi tysta timmar.
+func (p *PushoverService) SendPriceFetchFailedNotification(summary string, cause error, appURL string) error {
+	message := fmt.Sprintf(
+		"%s\n\nOrsak: %s\n\nBatteriet fortsätter på det schema som redan är sparat. Kör en manuell uppdatering när tjänsten är tillbaka.",
+		summary, truncate(cause.Error(), 400),
+	)
+
+	return p.SendNotificationWithPriority(message, "Batteristyrning: priserna uppdaterades inte", appURL, 1)
 }
