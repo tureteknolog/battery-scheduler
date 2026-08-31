@@ -18,6 +18,37 @@ const QUARTER_HOURS = 0.25;
 // Grundlast i huset som vi aldrig kommer under (matchar baseLoad i backend/services/smhi.go)
 const BASE_LOAD_KW = 1.3;
 
+// Rutnätet av kvartar kommer från klockan, inte från prislistan. Tidigare byggdes
+// hela tabellen av det Entsoe hade levererat, så när morgondagens priser saknades
+// fanns inga rader att klicka på - och då gick det inte att schemalägga för hand
+// heller. 192 kvartar från lokal midnatt, samma fönster som /api/power-estimate,
+// så att consumption[idx] fortsätter ligga i takt med prices[idx].
+const GRID_QUARTERS = 192;
+const QUARTER_MS = 15 * 60 * 1000;
+
+const buildQuarterGrid = (pricesData) => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+
+  const priceAt = new Map();
+  for (const p of pricesData) {
+    priceAt.set(new Date(p.timestamp).getTime(), p.price);
+  }
+
+  const grid = [];
+  for (let i = 0; i < GRID_QUARTERS; i++) {
+    const timestamp = new Date(start.getTime() + i * QUARTER_MS);
+    const price = priceAt.get(timestamp.getTime());
+    grid.push({
+      timestamp,
+      // null = priset är okänt (Entsoe nere, eller morgondagen inte släppt än).
+      // Kvarten går att schemalägga för hand, men auto-fyll hoppar över den.
+      price: price === undefined ? null : price,
+    });
+  }
+  return grid;
+};
+
 // Laddkurva approximerad från bilden
 const getChargePower = (soc) => {
   if (soc < 15) return 0;
@@ -53,10 +84,7 @@ function BatteryScheduler() {
         // Hämta priser
         const pricesRes = await fetch(`${API_BASE}/prices`);
         const pricesData = await pricesRes.json();
-        setPrices(pricesData.map(p => ({
-          ...p,
-          timestamp: new Date(p.timestamp)
-        })));
+        setPrices(buildQuarterGrid(pricesData));
         
         // Hämta schedule
         const scheduleRes = await fetch(`${API_BASE}/schedule`);
@@ -124,6 +152,12 @@ function BatteryScheduler() {
     }
     return 0;
   }, [prices]);
+
+  // Kvartar framåt i tiden som saknar pris - de kan bara schemaläggas för hand
+  const missingPriceCount = useMemo(
+    () => prices.filter((p, idx) => idx >= currentQuarterIndex && p.price === null).length,
+    [prices, currentQuarterIndex]
+  );
 
   // Simulera batterinivå: använd riktig SoC vid aktuell tidpunkt, simulera framåt
   const simulateBatterySoC = useMemo(() => {
@@ -262,8 +296,12 @@ function BatteryScheduler() {
       return delivered;
     };
 
+    // Utan pris går kvarten inte att värdera mot de andra, så auto-fyll lämnar
+    // den orörd i stället för att sortera in den som om den vore gratis
     const indices = [];
-    for (let i = currentQuarterIndex; i < n; i++) indices.push(i);
+    for (let i = currentQuarterIndex; i < n; i++) {
+      if (prices[i].price !== null) indices.push(i);
+    }
     const byPriceDesc = [...indices].sort((a, b) => prices[b].price - prices[a].price || a - b);
     // Vid lika pris väljer vi den senaste laddkvarten: energin behöver då lagras
     // kortare tid och blockerar inte batteriets kapacitet i onödan
@@ -552,6 +590,14 @@ function BatteryScheduler() {
             </div>
           </div>
           
+          {missingPriceCount > 0 && (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <span className="font-semibold">Pris saknas för {missingPriceCount} kvartar.</span>{' '}
+              Entsoe har inte lämnat data för hela perioden. Kvartarna ligger kvar i tabellen och
+              går att schemalägga för hand - auto-fyll hoppar över dem.
+            </div>
+          )}
+
           <div className="grid md:grid-cols-3 gap-4">
             <div>
               <label className="text-sm font-medium mb-2 block">
@@ -714,7 +760,7 @@ function BatteryScheduler() {
 
                   {/* Prislinje som stegfunktion */}
                   {prices.map((priceData, idx) => {
-                    if (idx < cStart) return null;
+                    if (idx < cStart || priceData.price === null) return null;
                     const x1 = toX(idx);
                     const x2 = idx + 1 < prices.length ? toX(idx + 1) : toX(idx) + 1120 / cLen;
                     const yRange = priceYMax - priceYMin;
@@ -816,7 +862,7 @@ function BatteryScheduler() {
                       {formatDate(prices[hoverIdx].timestamp)} {formatTime(prices[hoverIdx].timestamp)}
                     </text>
                     <text x={Math.min(toX(hoverIdx) + 18, 1070)} y="51" fontSize="12" fill="#6b7280">
-                      Pris: {prices[hoverIdx].price} öre/kWh
+                      Pris: {prices[hoverIdx].price !== null ? `${prices[hoverIdx].price} öre/kWh` : 'saknas'}
                     </text>
                     <text x={Math.min(toX(hoverIdx) + 18, 1070)} y="67" fontSize="12" fill="#6366f1">
                       Förbrukning: {consumption[hoverIdx] ? consumption[hoverIdx].toFixed(1) : '-'} kW
@@ -966,7 +1012,7 @@ function BatteryScheduler() {
                         {formatTime(priceData.timestamp)}
                       </td>
                       <td className={`px-3 py-2 text-center font-semibold border-r text-xs ${priceBg}`}>
-                        {priceData.price}
+                        {priceData.price !== null ? priceData.price : <span className="text-gray-400">-</span>}
                       </td>
                       <td className="px-2 py-2 text-center border-r text-xs">
                         {consumption[idx] ? consumption[idx].toFixed(1) : '-'}
