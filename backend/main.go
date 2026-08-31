@@ -14,6 +14,11 @@ import (
 )
 
 func main() {
+	// Logga vilken tidszon processen faktiskt kör i. Saknas tzdata i imagen
+	// faller Go tillbaka på UTC trots TZ-variabeln, och då blir dygnsgränserna
+	// (och därmed pris- och schemafönstret) förskjutna.
+	log.Printf("Local timezone: %s (TZ=%q, now=%s)", time.Local, os.Getenv("TZ"), time.Now().Format(time.RFC3339))
+
 	// Läs miljövariabler först, fallback till databas
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {

@@ -93,7 +93,11 @@ func (d *Database) SavePrices(prices []models.Price) error {
 	defer stmt.Close()
 
 	for _, p := range prices {
-		_, err := stmt.Exec(p.Timestamp, p.PriceOre, p.Area)
+		// Alltid UTC: sqlite-drivrutinen sparar tidsstämpeln som text med den
+		// tidszon den råkar ha, och SQLite jämför text lexikalt. Blandade
+		// offsets ger både fel sorteringsordning och dubbletter i stället för
+		// INSERT OR REPLACE på samma tidpunkt.
+		_, err := stmt.Exec(p.Timestamp.UTC(), p.PriceOre, p.Area)
 		if err != nil {
 			return err
 		}
@@ -106,7 +110,7 @@ func (d *Database) SavePrices(prices []models.Price) error {
 func (d *Database) GetPrices(from, to time.Time) ([]models.Price, error) {
 	rows, err := d.db.Query(
 		"SELECT timestamp, price_ore, area FROM prices WHERE timestamp >= ? AND timestamp < ? ORDER BY timestamp",
-		from, to,
+		from.UTC(), to.UTC(), // samma tidszon som vid sparning, se SavePrices
 	)
 	if err != nil {
 		return nil, err
@@ -147,7 +151,8 @@ func (d *Database) SaveSchedule(changes []models.ScheduleChange) error {
 	defer stmt.Close()
 
 	for _, change := range changes {
-		_, err := stmt.Exec(change.Timestamp, change.Mode)
+		// UTC av samma skäl som i SavePrices - ORDER BY timestamp sorterar text
+		_, err := stmt.Exec(change.Timestamp.UTC(), change.Mode)
 		if err != nil {
 			return err
 		}

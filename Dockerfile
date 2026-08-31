@@ -19,8 +19,10 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o main .
 # Runtime stage
 FROM alpine:latest
 
-# Installera ca-certificates för HTTPS och sqlite
-RUN apk --no-cache add ca-certificates sqlite-libs
+# Installera ca-certificates för HTTPS, sqlite och tzdata.
+# tzdata krävs för att TZ=Europe/Stockholm ska ha effekt - utan zoneinfo-filerna
+# faller Go tillbaka på UTC utan att säga till, och dygnsgränserna hamnar fel.
+RUN apk --no-cache add ca-certificates sqlite-libs tzdata
 
 WORKDIR /root/
 
