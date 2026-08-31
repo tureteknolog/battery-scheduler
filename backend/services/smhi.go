@@ -122,9 +122,9 @@ func (s *SMHIService) GetTemperatureAt(forecasts []TemperatureForecast, t time.T
 
 // ConsumptionFromTemperature beräknar prognosticerad förbrukning (kW) baserat på temperatur
 // Värmepump: y = 0.0041x² - 0.1767x + 2.4392 (aktiv under 15°C)
-// Plus tomgångslast för huset: 1.0 kW
+// Plus tomgångslast för huset: 1.3 kW (grundlast vi aldrig kommer under)
 func ConsumptionFromTemperature(tempC float64) float64 {
-	baseLoad := 1.0
+	baseLoad := 1.3
 	if tempC >= 15.0 {
 		return baseLoad
 	}

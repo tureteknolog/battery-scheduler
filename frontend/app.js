@@ -14,6 +14,9 @@ const MODES = [
 
 const BATTERY_CAPACITY = 42;
 const MIN_SOC = 15;
+const QUARTER_HOURS = 0.25;
+// Grundlast i huset som vi aldrig kommer under (matchar baseLoad i backend/services/smhi.go)
+const BASE_LOAD_KW = 1.3;
 
 // Laddkurva approximerad från bilden
 const getChargePower = (soc) => {
@@ -134,8 +137,8 @@ function BatteryScheduler() {
     let soc = currentSoC;
     for (let i = currentQuarterIndex + 1; i < prices.length; i++) {
       const mode = getModeForQuarter(i);
-      const consumptionKw = consumption[i] || 1.0;
-      const quarterHours = 0.25;
+      const consumptionKw = consumption[i] || BASE_LOAD_KW;
+      const quarterHours = QUARTER_HOURS;
 
       let deltaEnergy = 0;
 
@@ -218,26 +221,129 @@ function BatteryScheduler() {
     return result;
   }, [schedule, prices]);
   
-  // Beräkna laddnings- och urladdningskvartar baserat på prisdifferens D
+  // Beräkna laddnings- och urladdningskvartar baserat på prisdifferens D.
+  //
+  // Laddning och urladdning är inte symmetriska: laddning sker alltid på ca 10 kW
+  // (2.5 kWh/kvart) medan urladdning begränsas av husets prognosticerade förbrukning
+  // (ofta 1.3-4 kW, dvs 0.3-1.0 kWh/kvart). En laddkvart räcker därför till flera
+  // urladdningskvartar, så vi parar ihop dem på energi i stället för antal kvartar.
+  //
+  // Dessutom måste energin finnas i batteriet innan den kan användas: varje
+  // urladdningskvart täcks bara av laddkvartar som ligger före den i tiden (eller av
+  // energi som redan är lagrad i batteriet). Hela uppsättningen simuleras mot SoC så
+  // att batteriet varken blir fullt mitt i en laddning eller tomt mitt i en urladdning.
   const { chargeIndices, dischargeIndices } = useMemo(() => {
-    const sorted = prices
-      .map((p, idx) => ({ price: p.price, idx }))
-      .filter(p => p.idx >= currentQuarterIndex)
-      .sort((a, b) => a.price - b.price);
-
     const charge = new Set();
     const discharge = new Set();
+    const n = prices.length;
+    if (n === 0 || currentQuarterIndex >= n) {
+      return { chargeIndices: charge, dischargeIndices: discharge };
+    }
 
-    let lo = 0, hi = sorted.length - 1;
-    while (lo < hi && sorted[hi].price - sorted[lo].price >= priceDiffD) {
-      charge.add(sorted[lo].idx);
-      discharge.add(sorted[hi].idx);
-      lo++;
-      hi--;
+    const dischargeEnergy = (idx) => (consumption[idx] || BASE_LOAD_KW) * QUARTER_HOURS;
+
+    // Simulerar SoC framåt. Returnerar null om uppsättningen inte går att genomföra,
+    // annars hur mycket energi (kWh) varje laddkvart faktiskt levererar - laddeffekten
+    // trappas ju ned när batteriet närmar sig fullt.
+    const simulate = (chargeSet, dischargeSet) => {
+      let soc = currentSoC;
+      const delivered = new Map();
+      for (let i = currentQuarterIndex; i < n; i++) {
+        if (chargeSet.has(i)) {
+          const energy = -getChargePower(soc) * QUARTER_HOURS;
+          soc += (energy / BATTERY_CAPACITY) * 100;
+          if (soc > 100.001) return null; // laddningen skulle spillas
+          delivered.set(i, energy);
+        } else if (dischargeSet.has(i)) {
+          soc -= (dischargeEnergy(i) / BATTERY_CAPACITY) * 100;
+          if (soc < MIN_SOC - 0.001) return null; // energin räcker inte till
+        }
+      }
+      return delivered;
+    };
+
+    const indices = [];
+    for (let i = currentQuarterIndex; i < n; i++) indices.push(i);
+    const byPriceDesc = [...indices].sort((a, b) => prices[b].price - prices[a].price || a - b);
+    // Vid lika pris väljer vi den senaste laddkvarten: energin behöver då lagras
+    // kortare tid och blockerar inte batteriets kapacitet i onödan
+    const byPriceAsc = [...indices].sort((a, b) => prices[a].price - prices[b].price || b - a);
+
+    // Energi som redan finns i batteriet är redan betald och kan användas direkt
+    let storedEnergy = Math.max(0, ((currentSoC - MIN_SOC) / 100) * BATTERY_CAPACITY);
+    // kWh som varje vald laddkvart levererar respektive redan är intecknad för
+    const chargeCapacity = new Map();
+    const chargeUsed = new Map();
+    const chargeLeft = (c) => Math.max(0, (chargeCapacity.get(c) || 0) - (chargeUsed.get(c) || 0));
+
+    // Gå igenom urladdningskandidaterna med dyraste kvarten först
+    for (const d of byPriceDesc) {
+      if (charge.has(d) || discharge.has(d)) continue;
+      if (prices[d].price <= 0) continue; // inget att tjäna på att urladda gratis
+
+      const maxChargePrice = prices[d].price - priceDiffD;
+      let need = dischargeEnergy(d);
+      const usedFrom = new Map(); // laddkvart -> kWh vi tar därifrån
+      const newCharges = [];
+
+      // 1. Använd i första hand energi som redan är lagrad i batteriet (kostnad 0)
+      let fromStored = 0;
+      if (maxChargePrice >= 0) {
+        fromStored = Math.min(storedEnergy, need);
+        need -= fromStored;
+      }
+
+      // 2. Därefter energi som blir över i redan valda laddkvartar före d
+      for (const c of byPriceAsc) {
+        if (need <= 0.0001) break;
+        if (prices[c].price > maxChargePrice || prices[c].price >= prices[d].price) break; // resten är för dyra
+        if (!charge.has(c) || c >= d) continue;
+        const available = chargeLeft(c) - (usedFrom.get(c) || 0);
+        if (available <= 0) continue;
+        const take = Math.min(available, need);
+        usedFrom.set(c, (usedFrom.get(c) || 0) + take);
+        need -= take;
+      }
+
+      // 3. Lägg till nya laddkvartar före d om det fortfarande fattas energi
+      for (const c of byPriceAsc) {
+        if (need <= 0.0001) break;
+        if (prices[c].price > maxChargePrice || prices[c].price >= prices[d].price) break; // resten är för dyra
+        if (charge.has(c) || discharge.has(c) || c >= d) continue;
+        // Får den extra laddningen plats i batteriet? Annars provar vi nästa kvart
+        // i stället för att skrota urladdningen helt.
+        const candidateCharge = new Set(charge);
+        newCharges.forEach(x => candidateCharge.add(x));
+        candidateCharge.add(c);
+        const delivered = simulate(candidateCharge, discharge);
+        if (!delivered) continue;
+        const take = Math.min(delivered.get(c) || 0, need);
+        if (take <= 0) continue;
+        newCharges.push(c);
+        usedFrom.set(c, take);
+        need -= take;
+      }
+
+      // Går urladdningen inte att täcka tillräckligt billigt hoppar vi över kvarten
+      if (need > 0.0001) continue;
+
+      const tentativeCharge = new Set(charge);
+      newCharges.forEach(c => tentativeCharge.add(c));
+      const tentativeDischarge = new Set(discharge);
+      tentativeDischarge.add(d);
+      const delivered = simulate(tentativeCharge, tentativeDischarge);
+      if (!delivered) continue;
+
+      // Genomför: lägg till kvartarna och bokför energin utifrån simuleringen
+      newCharges.forEach(c => charge.add(c));
+      discharge.add(d);
+      storedEnergy -= fromStored;
+      usedFrom.forEach((take, c) => chargeUsed.set(c, (chargeUsed.get(c) || 0) + take));
+      delivered.forEach((energy, c) => chargeCapacity.set(c, energy));
     }
 
     return { chargeIndices: charge, dischargeIndices: discharge };
-  }, [prices, currentQuarterIndex, priceDiffD]);
+  }, [prices, consumption, currentQuarterIndex, currentSoC, priceDiffD]);
   
   const validateChargerOverlap = (startIdx, endIdx, mode) => {
     if (mode !== 5 && mode !== 6) return null;
