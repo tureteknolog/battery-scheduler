@@ -54,7 +54,7 @@ func TestFetchPricesWithRetrySucceedsAfterMaintenance(t *testing.T) {
 	defer closeServer()
 
 	from, to := testWindow()
-	prices, err := svc.FetchPricesWithRetry(from, to, 5, time.Millisecond)
+	prices, _, err := FetchPricesWithRetry([]PriceSource{svc}, from, to, 5, time.Millisecond)
 	if err != nil {
 		t.Fatalf("förväntade lyckad hämtning, fick: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestFetchPricesWithRetryGivesUpAfterAllAttempts(t *testing.T) {
 	defer closeServer()
 
 	from, to := testWindow()
-	_, err := svc.FetchPricesWithRetry(from, to, 4, time.Millisecond)
+	_, _, err := FetchPricesWithRetry([]PriceSource{svc}, from, to, 4, time.Millisecond)
 	if err == nil {
 		t.Fatal("förväntade fel när alla försök misslyckas")
 	}
@@ -107,7 +107,7 @@ func TestFetchPricesWithRetryStopsOnPermanentError(t *testing.T) {
 	defer closeServer()
 
 	from, to := testWindow()
-	_, err := svc.FetchPricesWithRetry(from, to, 5, time.Minute)
+	_, _, err := FetchPricesWithRetry([]PriceSource{svc}, from, to, 5, time.Minute)
 	if err == nil {
 		t.Fatal("förväntade fel vid 401")
 	}
@@ -125,7 +125,7 @@ func TestFetchPricesWithRetryStopsWhenTokenMissing(t *testing.T) {
 	svc.token = ""
 
 	from, to := testWindow()
-	_, err := svc.FetchPricesWithRetry(from, to, 5, time.Minute)
+	_, _, err := FetchPricesWithRetry([]PriceSource{svc}, from, to, 5, time.Minute)
 	if !errors.Is(err, ErrMissingToken) {
 		t.Fatalf("förväntade ErrMissingToken, fick: %v", err)
 	}

@@ -14,22 +14,22 @@ import (
 
 type API struct {
 	db            *db.Database
-	entsoe        *services.EntsoeService
+	priceSources  []services.PriceSource
 	pushover      *services.PushoverService
 	scheduler     *services.SchedulerService
 	smhi          *services.SMHIService
 	homeAssistant *services.HomeAssistantService
 }
 
-// NewAPI skapar en ny API-instans
-func NewAPI(database *db.Database, entsoe *services.EntsoeService, pushover *services.PushoverService, smhi *services.SMHIService, ha *services.HomeAssistantService) *API {
+// NewAPI skapar en ny API-instans. priceSources provas i ordning vid prishämtning.
+func NewAPI(database *db.Database, priceSources []services.PriceSource, pushover *services.PushoverService, smhi *services.SMHIService, ha *services.HomeAssistantService) *API {
 	// Ladda befintligt schema från databasen
 	schedule, _ := database.GetSchedule()
 	scheduler := services.NewSchedulerService(schedule)
 
 	return &API{
 		db:            database,
-		entsoe:        entsoe,
+		priceSources:  priceSources,
 		pushover:      pushover,
 		scheduler:     scheduler,
 		smhi:          smhi,
@@ -168,8 +168,9 @@ func (a *API) RefreshPrices(c *gin.Context) {
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	endOfTomorrow := startOfToday.Add(48 * time.Hour)
 
-	// Hämta priser från Entsoe
-	prices, err := a.entsoe.FetchPrices(startOfToday, endOfTomorrow)
+	// Hämta priser, med reservkällan om Entsoe inte svarar. Här väntar en
+	// användare på svaret, så vi kör ett varv genom källorna utan backoff-pauser.
+	prices, source, err := services.FetchPricesWithRetry(a.priceSources, startOfToday, endOfTomorrow, 1, 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Kunde inte hämta priser: %v", err)})
 		return
@@ -201,15 +202,16 @@ func (a *API) RefreshPrices(c *gin.Context) {
 
 		// Skicka Pushover-notis
 		appURL, _ := a.db.GetSetting("app_url")
-		if err := a.pushover.SendPriceUpdateNotification(avg, min, max, appURL); err != nil {
+		if err := a.pushover.SendPriceUpdateNotification(avg, min, max, source, appURL); err != nil {
 			// Logga fel men fortsätt ändå
 			fmt.Printf("Failed to send Pushover notification: %v\n", err)
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("Hämtade %d priser", len(prices)),
+		"message": fmt.Sprintf("Hämtade %d priser från %s", len(prices), source),
 		"prices":  len(prices),
+		"source":  source,
 	})
 }
 

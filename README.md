@@ -6,7 +6,7 @@ En komplett lösning för att styra hemma-batterilagring baserat på spotpriser 
 
 Detta system hjälper dig att:
 - Schemalägga batteriladdning och urladdning baserat på elpriser
-- Automatiskt hämta kvartspriser från Entsoe (SE3)
+- Automatiskt hämta kvartspriser från Entsoe (SE3), med elprisetjustnu.se som reservkälla
 - Simulera batterinivå över tid
 - Styra elbilsladdning
 - Få push-notiser när nya priser är tillgängliga
@@ -17,13 +17,28 @@ Detta system hjälper dig att:
 - **Backend:** Go 1.23, Gin web framework, SQLite
 - **Frontend:** React 18, Tailwind CSS
 - **Deployment:** Docker, Docker Compose
-- **Integrationer:** Entsoe Transparency Platform, Pushover
+- **Integrationer:** Entsoe Transparency Platform, elprisetjustnu.se (reservpriskälla), Pushover, SMHI, Home Assistant
 
 ## Krav
 
 - Docker & Docker Compose
 - Entsoe API token (registrera på https://transparency.entsoe.eu/)
 - Pushover konto (valfritt, för notiser)
+
+## Priskällor
+
+Priserna hämtas i första hand från Entsoe. Svarar inte Entsoe - de har längre
+driftstopp då och då - provas elprisetjustnu.se i samma försök, innan backoffen.
+
+Reservkällan hämtar i sin tur sin data från Entsoe, men med egen hämtning och
+egen växelkurs (exchangeratesapi.io i stället för vår fasta kurs), så priserna
+kan skilja någon procent. Den hjälper alltså när Entsoes API ligger nere, inte
+om Entsoe skulle sluta publicera data. Visas priserna offentligt vill de gärna
+bli omnämnda som källa.
+
+Kvartar som ingen källa har pris för lämnas tomma i stället för att gissas -
+tabellen visar dem med "-" och de går fortfarande att schemalägga för hand,
+medan auto-fyll hoppar över dem.
 
 ## Installation
 
@@ -115,7 +130,7 @@ docker-compose down -v
 # Hämta alla priser (idag + imorgon)
 GET http://localhost:8080/api/prices
 
-# Tvinga uppdatering från Entsoe
+# Tvinga uppdatering (Entsoe, annars reservkällan - svaret säger vilken som användes)
 POST http://localhost:8080/api/refresh-prices
 ```
 

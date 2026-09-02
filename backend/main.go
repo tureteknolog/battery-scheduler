@@ -72,12 +72,16 @@ func main() {
 
 	// Skapa services
 	entsoeService := services.NewEntsoeService(entsoeToken, area)
+	// Reservkälla när Entsoes API ligger nere. Entsoe först - det är originalet,
+	// med vår egen växelkurs - och elprisetjustnu.se bara när det inte går.
+	elprisetService := services.NewElprisetService(area)
+	priceSources := []services.PriceSource{entsoeService, elprisetService}
 	pushoverService := services.NewPushoverService(pushoverApp, pushoverUser)
 	smhiService := services.NewSMHIService(smhiLat, smhiLon)
 	haService := services.NewHomeAssistantService(haURL, haToken)
 
 	// Skapa API
-	apiHandler := api.NewAPI(database, entsoeService, pushoverService, smhiService, haService)
+	apiHandler := api.NewAPI(database, priceSources, pushoverService, smhiService, haService)
 
 	// Sätt upp Gin router
 	router := gin.Default()
@@ -126,7 +130,7 @@ func main() {
 
 	// Kör varje dag kl 13:05 (när Nordpool släpper morgondagens priser)
 	c.AddFunc("5 13 * * *", func() {
-		runScheduledPriceFetch(database, entsoeService, pushoverService)
+		runScheduledPriceFetch(database, priceSources, pushoverService)
 	})
 
 	c.Start()
@@ -154,7 +158,7 @@ const (
 
 // runScheduledPriceFetch hämtar morgondagens priser, sparar dem och notifierar
 // via Pushover - både när det gick bra och när det inte gjorde det.
-func runScheduledPriceFetch(database *db.Database, entsoe *services.EntsoeService, pushover *services.PushoverService) {
+func runScheduledPriceFetch(database *db.Database, priceSources []services.PriceSource, pushover *services.PushoverService) {
 	log.Println("Running scheduled price fetch...")
 
 	now := time.Now()
@@ -172,9 +176,9 @@ func runScheduledPriceFetch(database *db.Database, entsoe *services.EntsoeServic
 		}
 	}
 
-	prices, err := entsoe.FetchPricesWithRetry(startOfToday, endOfTomorrow, priceFetchAttempts, priceFetchBaseDelay)
+	prices, source, err := services.FetchPricesWithRetry(priceSources, startOfToday, endOfTomorrow, priceFetchAttempts, priceFetchBaseDelay)
 	if err != nil {
-		notifyFailure(fmt.Sprintf("Kunde inte hämta elpriser från Entsoe efter %d försök.", priceFetchAttempts), err)
+		notifyFailure(fmt.Sprintf("Kunde inte hämta elpriser efter %d försök - varken från Entsoe eller reservkällan.", priceFetchAttempts), err)
 		return // Avbryt - spara INTE mock-data till databasen
 	}
 
@@ -183,7 +187,7 @@ func runScheduledPriceFetch(database *db.Database, entsoe *services.EntsoeServic
 		return
 	}
 
-	log.Printf("Successfully fetched and saved %d prices", len(prices))
+	log.Printf("Successfully fetched and saved %d prices from %s", len(prices), source)
 
 	// Beräkna statistik
 	var sum, min, max int
@@ -203,7 +207,7 @@ func runScheduledPriceFetch(database *db.Database, entsoe *services.EntsoeServic
 	avg := sum / len(prices)
 
 	// Skicka Pushover-notis
-	if err := pushover.SendPriceUpdateNotification(avg, min, max, appURL); err != nil {
+	if err := pushover.SendPriceUpdateNotification(avg, min, max, source, appURL); err != nil {
 		log.Printf("Failed to send Pushover notification: %v", err)
 	} else {
 		log.Println("Pushover notification sent successfully")

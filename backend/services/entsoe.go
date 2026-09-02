@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -27,12 +26,13 @@ const entsoeAPIURL = "https://web-api.tp.entsoe.eu/api"
 // ErrMissingToken returneras när Entsoe-token inte är konfigurerad
 var ErrMissingToken = errors.New("Entsoe API token saknas - lägg till i settings")
 
-// ErrNoData returneras när Entsoe svarar utan prisdata, t.ex. när morgondagens
-// priser ännu inte är publicerade
-var ErrNoData = errors.New("Entsoe svarade utan prisdata")
+// ErrNoData returneras när en priskälla svarar utan prisdata, t.ex. när
+// morgondagens priser ännu inte är publicerade
+var ErrNoData = errors.New("priskällan svarade utan prisdata")
 
-// HTTPStatusError är ett HTTP-fel från Entsoe med statuskoden bevarad, så att
-// anroparen kan skilja tillfälliga fel (5xx, 429) från permanenta (t.ex. 401)
+// HTTPStatusError är ett HTTP-fel från en priskälla med statuskoden bevarad, så
+// att anroparen kan skilja tillfälliga fel (5xx, 429) från permanenta (t.ex. 401
+// från Entsoe eller 404 från elprisetjustnu.se)
 type HTTPStatusError struct {
 	StatusCode int
 	Body       string
@@ -41,7 +41,7 @@ type HTTPStatusError struct {
 func (e *HTTPStatusError) Error() string {
 	// Svaret kan vara en hel HTML-sida - t.ex. underhållssidan - så korta ner
 	// den, annars dränker den både loggen och Pushover-notisen
-	return fmt.Sprintf("Entsoe API error (status %d): %s", e.StatusCode, truncate(strings.TrimSpace(e.Body), 200))
+	return fmt.Sprintf("HTTP-fel (status %d): %s", e.StatusCode, truncate(strings.TrimSpace(e.Body), 200))
 }
 
 // Retryable säger om felet är värt att försöka igen
@@ -84,6 +84,9 @@ type Point struct {
 	Price    float64 `xml:"price.amount"`
 }
 
+// Name är källans namn, för logg och notis
+func (e *EntsoeService) Name() string { return "Entsoe" }
+
 // NewEntsoeService skapar en ny Entsoe-service
 func NewEntsoeService(token, area string) *EntsoeService {
 	return &EntsoeService{
@@ -93,42 +96,6 @@ func NewEntsoeService(token, area string) *EntsoeService {
 		// Timeout så att ett hängande anrop inte blockerar cron-jobbet i evighet
 		client: &http.Client{Timeout: 60 * time.Second},
 	}
-}
-
-// FetchPricesWithRetry hämtar priser och gör om försöket med dubblad fördröjning
-// när felet är tillfälligt (5xx, 429, nätverksfel, ännu opublicerad data).
-// Permanenta fel - saknad eller ogiltig token - avbryter direkt.
-func (e *EntsoeService) FetchPricesWithRetry(from, to time.Time, attempts int, baseDelay time.Duration) ([]models.Price, error) {
-	if attempts < 1 {
-		attempts = 1
-	}
-
-	var lastErr error
-	delay := baseDelay
-
-	for attempt := 1; attempt <= attempts; attempt++ {
-		prices, err := e.FetchPrices(from, to)
-		if err == nil {
-			if attempt > 1 {
-				log.Printf("Entsoe: prishämtningen lyckades på försök %d/%d", attempt, attempts)
-			}
-			return prices, nil
-		}
-
-		lastErr = err
-		if !retryable(err) {
-			return nil, fmt.Errorf("permanent fel från Entsoe: %w", err)
-		}
-		if attempt == attempts {
-			break
-		}
-
-		log.Printf("Entsoe: försök %d/%d misslyckades (%v) - nytt försök om %s", attempt, attempts, err, delay)
-		time.Sleep(delay)
-		delay *= 2
-	}
-
-	return nil, fmt.Errorf("gav upp efter %d försök: %w", attempts, lastErr)
 }
 
 // retryable avgör om ett fel kan tänkas gå över av sig självt

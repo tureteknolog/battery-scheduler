@@ -80,11 +80,13 @@ func (p *PushoverService) SendNotificationWithPriority(message, title, url strin
 	return nil
 }
 
-// SendPriceUpdateNotification skickar notis om nya elpriser
-func (p *PushoverService) SendPriceUpdateNotification(avgPrice int, minPrice int, maxPrice int, appURL string) error {
+// SendPriceUpdateNotification skickar notis om nya elpriser. source säger vilken
+// priskälla som svarade - står det något annat än Entsoe är det reservkällan som
+// bär, vilket är värt att veta innan man litar på priserna in i öret.
+func (p *PushoverService) SendPriceUpdateNotification(avgPrice int, minPrice int, maxPrice int, source string, appURL string) error {
 	message := fmt.Sprintf(
-		"Morgondagens elpriser är här!\n\nMedelpris: %d öre/kWh\nLägsta: %d öre/kWh\nHögsta: %d öre/kWh",
-		avgPrice, minPrice, maxPrice,
+		"Morgondagens elpriser är här!\n\nMedelpris: %d öre/kWh\nLägsta: %d öre/kWh\nHögsta: %d öre/kWh\n\nKälla: %s",
+		avgPrice, minPrice, maxPrice, source,
 	)
 
 	return p.SendNotification(message, "Batteristyrning", appURL)
