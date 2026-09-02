@@ -49,6 +49,12 @@ func (a *API) GetPrices(c *gin.Context) {
 		return
 	}
 
+	// En tom slice blir null i JSON, och det kraschar frontendens inläsning.
+	// Inga priser är ett fullt normalt läge - då ritas rutnätet utan dem.
+	if prices == nil {
+		prices = []models.Price{}
+	}
+
 	c.JSON(http.StatusOK, prices)
 }
 
@@ -58,6 +64,10 @@ func (a *API) GetSchedule(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	if schedule == nil {
+		schedule = []models.ScheduleChange{} // samma skäl som i GetPrices
 	}
 
 	c.JSON(http.StatusOK, schedule)

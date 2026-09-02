@@ -30,8 +30,13 @@ const buildQuarterGrid = (pricesData) => {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
 
+  // Har databasen inga priser alls för fönstret svarar API:t null, inte []. Just
+  // då - när Entsoe varit nere ett dygn - är rutnätet som viktigast, så det ska
+  // byggas ändå.
+  const known = Array.isArray(pricesData) ? pricesData : [];
+
   const priceAt = new Map();
-  for (const p of pricesData) {
+  for (const p of known) {
     priceAt.set(new Date(p.timestamp).getTime(), p.price);
   }
 
@@ -89,7 +94,7 @@ function BatteryScheduler() {
         // Hämta schedule
         const scheduleRes = await fetch(`${API_BASE}/schedule`);
         const scheduleData = await scheduleRes.json();
-        setSchedule(scheduleData.map(s => ({
+        setSchedule((Array.isArray(scheduleData) ? scheduleData : []).map(s => ({
           ...s,
           timestamp: new Date(s.timestamp)
         })));
@@ -97,7 +102,7 @@ function BatteryScheduler() {
         // Hämta förbrukning
         const consumptionRes = await fetch(`${API_BASE}/power-estimate`);
         const consumptionData = await consumptionRes.json();
-        setConsumption(consumptionData.map(c => c.power_kw));
+        setConsumption((Array.isArray(consumptionData) ? consumptionData : []).map(c => c.power_kw));
         
         // Hämta batterinivå
         const socRes = await fetch(`${API_BASE}/battery-soc`);
