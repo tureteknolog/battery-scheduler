@@ -33,10 +33,13 @@ type CurrentModeResponse struct {
 	Description string    `json:"description"`
 }
 
-// BatterySoCResponse är aktuellt laddtillstånd
+// BatterySoCResponse är aktuellt laddtillstånd. Available är false när värdet
+// inte gick att hämta och Percentage bara är ett platshållarvärde - annars ser
+// gränssnittet en mätning där det inte finns någon.
 type BatterySoCResponse struct {
 	Percentage float64   `json:"percentage"`
 	Timestamp  time.Time `json:"timestamp"`
+	Available  bool      `json:"available"`
 }
 
 // Settings representerar en nyckel-värde-inställning

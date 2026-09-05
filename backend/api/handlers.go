@@ -158,10 +158,12 @@ func (a *API) GetBatterySoC(c *gin.Context) {
 	soc, lastChanged, err := a.homeAssistant.GetSoC()
 	if err != nil {
 		fmt.Printf("Failed to fetch SoC from Home Assistant: %v\n", err)
-		// Fallback till mock-värde
+		// Platshållare så att simuleringen har något att räkna på, men märkt som
+		// otillgänglig: 50% har annars sett ut som en riktig mätning
 		c.JSON(http.StatusOK, models.BatterySoCResponse{
 			Percentage: 50.0,
 			Timestamp:  time.Now(),
+			Available:  false,
 		})
 		return
 	}
@@ -169,6 +171,7 @@ func (a *API) GetBatterySoC(c *gin.Context) {
 	c.JSON(http.StatusOK, models.BatterySoCResponse{
 		Percentage: soc,
 		Timestamp:  lastChanged,
+		Available:  true,
 	})
 }
 

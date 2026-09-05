@@ -13,7 +13,10 @@ const MODES = [
 ];
 
 const BATTERY_CAPACITY = 42;
-const MIN_SOC = 15;
+// Reserven växelriktaren inte urladdar under. Står batteriet oanvänt länge kan
+// självurladdning ta det under gränsen ändå - då gäller den lägre nivån, inte
+// den här, både i simuleringen och i det som visas.
+const MIN_SOC = 10;
 const QUARTER_HOURS = 0.25;
 // Grundlast i huset som vi aldrig kommer under (matchar baseLoad i backend/services/smhi.go)
 const BASE_LOAD_KW = 1.3;
@@ -56,7 +59,10 @@ const buildQuarterGrid = (pricesData) => {
 
 // Laddkurva approximerad från bilden
 const getChargePower = (soc) => {
-  if (soc < 15) return 0;
+  // Under reserven laddar batteriet med full effekt - det är så det tar sig
+  // tillbaka efter självurladdning. (Grenen var oåtkomlig förr: simuleringen
+  // klampade SoC vid gränsen och kom aldrig under den.)
+  if (soc < MIN_SOC) return -10.0;
   if (soc <= 80) return -10.0;
   if (soc <= 90) return -10.0 + (soc - 80) * (5.0 / 10);
   if (soc <= 95) return -5.0 + (soc - 90) * (3.0 / 5);
@@ -72,6 +78,8 @@ function BatteryScheduler() {
   const [priceYMax, setPriceYMax] = useState(400);
   const [priceDiffD, setPriceDiffD] = useState(50);
   const [currentSoC, setCurrentSoC] = useState(50);
+  // false när Home Assistant inte svarar - då är currentSoC ett platshållarvärde
+  const [socAvailable, setSocAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -110,6 +118,7 @@ function BatteryScheduler() {
         const socRes = await fetch(`${API_BASE}/battery-soc`);
         const socData = await socRes.json();
         setCurrentSoC(socData.percentage);
+        setSocAvailable(socData.available !== false);
         
         setLoading(false);
       } catch (error) {
@@ -127,8 +136,10 @@ function BatteryScheduler() {
         const socRes = await fetch(`${API_BASE}/battery-soc`);
         const socData = await socRes.json();
         setCurrentSoC(socData.percentage);
+        setSocAvailable(socData.available !== false);
       } catch (error) {
         console.error('Failed to update SoC:', error);
+        setSocAvailable(false);
       }
     }, 30000);
     
@@ -172,7 +183,7 @@ function BatteryScheduler() {
     if (prices.length === 0) return result;
 
     // Sätt riktig SoC vid aktuell kvart
-    result[currentQuarterIndex] = currentSoC;
+    result[currentQuarterIndex] = Number(currentSoC.toFixed(1));
 
     // Simulera framåt från nu
     let soc = currentSoC;
@@ -192,8 +203,11 @@ function BatteryScheduler() {
         deltaEnergy = 0;
       }
 
+      // Växelriktaren urladdar inte under reserven. Ligger batteriet redan under
+      // den ska kurvan visa var det faktiskt är, inte lyfta upp det till gränsen.
+      const socFloor = Math.min(MIN_SOC, currentSoC);
       const deltaSoC = (deltaEnergy / BATTERY_CAPACITY) * 100;
-      soc = Math.max(MIN_SOC, Math.min(100, soc - deltaSoC));
+      soc = Math.max(socFloor, Math.min(100, soc - deltaSoC));
 
       result[i] = Number(soc.toFixed(1));
     }
@@ -632,8 +646,18 @@ function BatteryScheduler() {
               {refreshing ? 'Hämtar priser...' : '🔄 Hämta priser'}
             </button>
             <div className="text-right">
-              <div className="text-sm text-gray-600">Aktuell laddnivå</div>
-              <div className="text-2xl font-bold text-blue-600">{currentSoC}%</div>
+              <div className="text-sm text-gray-600">
+                {socAvailable ? 'Aktuell laddnivå' : 'Laddnivå okänd'}
+              </div>
+              {socAvailable ? (
+                <div className={`text-2xl font-bold ${currentSoC < MIN_SOC ? 'text-red-600' : 'text-blue-600'}`}>
+                  {Number.isFinite(currentSoC) ? currentSoC.toFixed(1) : '-'}%
+                </div>
+              ) : (
+                <div className="text-2xl font-bold text-gray-400" title="Home Assistant svarar inte - simuleringen räknar på 50%">
+                  -
+                </div>
+              )}
             </div>
           </div>
 
