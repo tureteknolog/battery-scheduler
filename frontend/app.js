@@ -74,6 +74,8 @@ function BatteryScheduler() {
   const [currentSoC, setCurrentSoC] = useState(50);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState(null);
   
   const [isDragging, setIsDragging] = useState(false);
   const [draggedQuarters, setDraggedQuarters] = useState(new Set());
@@ -530,6 +532,34 @@ function BatteryScheduler() {
     setSchedule(newSchedule);
   };
 
+  // Hämtar priserna på nytt från Entsoe, eller reservkällan om Entsoe är nere.
+  // Cron-jobbet gör samma sak kl 14:05 - knappen finns för dygn då priserna
+  // släpptes sent och man inte vill vänta till nästa dag.
+  const handleRefreshPrices = async () => {
+    setRefreshing(true);
+    setRefreshStatus(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/refresh-prices`, { method: 'POST' });
+      const data = await response.json();
+
+      if (!response.ok) {
+        setRefreshStatus({ ok: false, text: data.error || 'Prishämtningen misslyckades' });
+        return;
+      }
+
+      // Läs om priserna så att tabellen och grafen visar det som just sparades
+      const pricesRes = await fetch(`${API_BASE}/prices`);
+      setPrices(buildQuarterGrid(await pricesRes.json()));
+      setRefreshStatus({ ok: true, text: data.message || 'Priserna är uppdaterade' });
+    } catch (error) {
+      console.error('Failed to refresh prices:', error);
+      setRefreshStatus({ ok: false, text: 'Kunde inte nå servern' });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -589,11 +619,33 @@ function BatteryScheduler() {
           <div className="flex items-center gap-3 mb-4">
             <div className="text-2xl">🔋</div>
             <h1 className="text-2xl font-bold text-gray-800">Batteristyrning SE3</h1>
-            <div className="ml-auto text-right">
+            <button
+              onClick={handleRefreshPrices}
+              disabled={refreshing}
+              title="Hämta priser från Entsoe, eller reservkällan om Entsoe inte svarar"
+              className={`ml-auto px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                refreshing
+                  ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+              }`}
+            >
+              {refreshing ? 'Hämtar priser...' : '🔄 Hämta priser'}
+            </button>
+            <div className="text-right">
               <div className="text-sm text-gray-600">Aktuell laddnivå</div>
               <div className="text-2xl font-bold text-blue-600">{currentSoC}%</div>
             </div>
           </div>
+
+          {refreshStatus && (
+            <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${
+              refreshStatus.ok
+                ? 'border-green-300 bg-green-50 text-green-900'
+                : 'border-red-300 bg-red-50 text-red-900'
+            }`}>
+              {refreshStatus.text}
+            </div>
+          )}
           
           {missingPriceCount > 0 && (
             <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">

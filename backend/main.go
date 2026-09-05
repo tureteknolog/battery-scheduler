@@ -128,13 +128,27 @@ func main() {
 	// Sätt upp cron för automatisk prishämtning
 	c := cron.New()
 
-	// Kör varje dag kl 13:05 (när Nordpool släpper morgondagens priser)
-	c.AddFunc("5 13 * * *", func() {
+	// Cron kör i time.Local, så tiden nedan är lokal och följer sommar-/vintertid
+	// av sig själv. (Innan tzdata kom in i imagen var time.Local UTC, och då sköt
+	// samma uttryck fram hämtningen till 15:05 på sommaren och 14:05 på vintern.)
+	fetchPrices := func() {
 		runScheduledPriceFetch(database, priceSources, pushoverService)
-	})
+	}
+
+	spec := os.Getenv("PRICE_FETCH_CRON")
+	if spec == "" {
+		spec = defaultPriceFetchCron
+	}
+	if _, err := c.AddFunc(spec, fetchPrices); err != nil {
+		log.Printf("Ogiltigt PRICE_FETCH_CRON %q (%v) - använder %q i stället", spec, err, defaultPriceFetchCron)
+		spec = defaultPriceFetchCron
+		if _, err := c.AddFunc(spec, fetchPrices); err != nil {
+			log.Fatalf("Failed to schedule price fetch: %v", err)
+		}
+	}
 
 	c.Start()
-	log.Printf("Cron scheduler started (price fetch at 13:05 daily, up to %d attempts)", priceFetchAttempts)
+	log.Printf("Cron scheduler started (price fetch at %q local time, up to %d attempts)", spec, priceFetchAttempts)
 
 	// Starta servern
 	port := os.Getenv("PORT")
@@ -154,6 +168,11 @@ const (
 	// marginal till kvällens dyra timmar.
 	priceFetchAttempts  = 5
 	priceFetchBaseDelay = 5 * time.Minute
+
+	// Morgondagens priser släpps vid 13-tiden, men Entsoe har dem sällan uppe på
+	// slaget - 14:05 lokal tid ger en timmes marginal. Kan sättas om med
+	// PRICE_FETCH_CRON (standard cron-syntax, lokal tid) utan att bygga om koden.
+	defaultPriceFetchCron = "5 14 * * *"
 )
 
 // runScheduledPriceFetch hämtar morgondagens priser, sparar dem och notifierar

@@ -205,7 +205,17 @@ GET http://localhost:8080/health
 
 ## Automatisk prishämtning
 
-Systemet hämtar automatiskt nya elpriser varje dag kl 13:05 (när Nord Pool släpper morgondagens priser).
+Systemet hämtar automatiskt nya elpriser varje dag kl 14:05 lokal tid. Morgondagens
+priser släpps vid 13-tiden, men ligger sällan uppe på slaget - en timmes marginal
+har visat sig behövas. Tiden följer sommar-/vintertid av sig själv, förutsatt att
+`tzdata` finns i imagen och `TZ` är satt (se Dockerfile).
+
+Behöver tiden ändras går det utan att bygga om koden - sätt `PRICE_FETCH_CRON` i
+miljön (vanlig cron-syntax, lokal tid, standard `5 14 * * *`). Ett ogiltigt uttryck
+loggas och ignoreras till förmån för standardvärdet.
+
+Vill du inte vänta till nästa dygn finns knappen **Hämta priser** uppe till höger i
+gränssnittet, som gör samma hämtning direkt och säger vilken källa som svarade.
 
 En Pushover-notis skickas när priserna är hämtade.
 
