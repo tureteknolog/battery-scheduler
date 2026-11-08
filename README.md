@@ -6,7 +6,7 @@ En komplett lösning för att styra hemma-batterilagring baserat på spotpriser 
 
 Detta system hjälper dig att:
 - Schemalägga batteriladdning och urladdning baserat på elpriser
-- Automatiskt hämta kvartspriser från Entsoe (SE3), med elprisetjustnu.se som reservkälla
+- Automatiskt hämta kvartspriser från Nord Pool via Home Assistant (SE3), med Entsoe och elprisetjustnu.se som reservkällor
 - Simulera batterinivå över tid
 - Styra elbilsladdning
 - Få push-notiser när nya priser är tillgängliga
@@ -17,7 +17,7 @@ Detta system hjälper dig att:
 - **Backend:** Go 1.23, Gin web framework, SQLite
 - **Frontend:** React 18, Tailwind CSS
 - **Deployment:** Docker, Docker Compose
-- **Integrationer:** Entsoe Transparency Platform, elprisetjustnu.se (reservpriskälla), Pushover, SMHI, Home Assistant
+- **Integrationer:** Home Assistant (Nord Pool-priser, laddnivå), Entsoe Transparency Platform och elprisetjustnu.se (reservpriskällor), Pushover, SMHI
 
 ## Krav
 
@@ -27,10 +27,21 @@ Detta system hjälper dig att:
 
 ## Priskällor
 
-Priserna hämtas i första hand från Entsoe. Svarar inte Entsoe - de har längre
-driftstopp då och då - provas elprisetjustnu.se i samma försök, innan backoffen.
+Priserna hämtas i första hand från Nord Pool-integrationen i Home Assistant
+(`sensor.nordpool_kwh_se3_sek_2_10_025`, attributen `raw_today` och
+`raw_tomorrow`; annan sensor med `HA_PRICE_ENTITY`). Den använder samma
+`HA_URL`/`HA_TOKEN` som laddnivån. Morgondagen tas med först när sensorn säger
+`tomorrow_valid`, och källan vägrar om sensorn gäller fel elområde eller valuta.
 
-Reservkällan hämtar i sin tur sin data från Entsoe, men med egen hämtning och
+Nord Pool ger priset direkt i kronor. Entsoe ger euro, som räknas om med en fast
+kurs (11,6) - 2026-11-06 blev Entsoe-priserna därför 5,2 % högre än Nord Pools.
+Variationerna över dygnet, som schemat styr på, är desamma.
+
+Svarar inte Home Assistant provas Entsoe och sedan elprisetjustnu.se i samma
+försök, innan backoffen. Entsoe har längre driftstopp då och då (inga priser
+2026-11-05--08).
+
+elprisetjustnu.se hämtar i sin tur sin data från Entsoe, men med egen hämtning och
 egen växelkurs (exchangeratesapi.io i stället för vår fasta kurs), så priserna
 kan skilja någon procent. Den hjälper alltså när Entsoes API ligger nere, inte
 om Entsoe skulle sluta publicera data. Visas priserna offentligt vill de gärna
@@ -130,7 +141,7 @@ docker-compose down -v
 # Hämta alla priser (idag + imorgon)
 GET http://localhost:8080/api/prices
 
-# Tvinga uppdatering (Entsoe, annars reservkällan - svaret säger vilken som användes)
+# Tvinga uppdatering (Home Assistant, annars reservkällorna - svaret säger vilken som användes)
 POST http://localhost:8080/api/refresh-prices
 ```
 

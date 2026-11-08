@@ -181,7 +181,7 @@ func (a *API) RefreshPrices(c *gin.Context) {
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	endOfTomorrow := startOfToday.Add(48 * time.Hour)
 
-	// Hämta priser, med reservkällan om Entsoe inte svarar. Här väntar en
+	// Hämta priser, med reservkällorna om Home Assistant inte svarar. Här väntar en
 	// användare på svaret, så vi kör ett varv genom källorna utan backoff-pauser.
 	prices, source, err := services.FetchPricesWithRetry(a.priceSources, startOfToday, endOfTomorrow, 1, 0)
 	if err != nil {

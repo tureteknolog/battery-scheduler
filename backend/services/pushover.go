@@ -81,8 +81,8 @@ func (p *PushoverService) SendNotificationWithPriority(message, title, url strin
 }
 
 // SendPriceUpdateNotification skickar notis om nya elpriser. source säger vilken
-// priskälla som svarade - står det något annat än Entsoe är det reservkällan som
-// bär, vilket är värt att veta innan man litar på priserna in i öret.
+// priskälla som svarade - står det något annat än Home Assistant är det en
+// reservkälla som bär, vilket är värt att veta innan man litar på priserna in i öret.
 func (p *PushoverService) SendPriceUpdateNotification(avgPrice int, minPrice int, maxPrice int, source string, appURL string) error {
 	message := fmt.Sprintf(
 		"Morgondagens elpriser är här!\n\nMedelpris: %d öre/kWh\nLägsta: %d öre/kWh\nHögsta: %d öre/kWh\n\nKälla: %s",
