@@ -100,7 +100,7 @@ func NewEntsoeService(token, area string) *EntsoeService {
 
 // retryable avgör om ett fel kan tänkas gå över av sig självt
 func retryable(err error) bool {
-	if errors.Is(err, ErrMissingToken) {
+	if errors.Is(err, ErrMissingToken) || errors.Is(err, ErrMisconfigured) {
 		return false
 	}
 

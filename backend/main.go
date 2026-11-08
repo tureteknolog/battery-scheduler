@@ -72,10 +72,12 @@ func main() {
 
 	// Skapa services
 	entsoeService := services.NewEntsoeService(entsoeToken, area)
-	// Reservkälla när Entsoes API ligger nere. Entsoe först - det är originalet,
-	// med vår egen växelkurs - och elprisetjustnu.se bara när det inte går.
+	// Reservkällor när Entsoes API ligger nere. Entsoe först - det är originalet,
+	// med vår egen växelkurs. Sedan Nord Pool via Home Assistant, den enda som
+	// inte själv hämtar från Entsoe, och sist elprisetjustnu.se.
+	haPriceService := services.NewHAPriceService(haURL, haToken, os.Getenv("HA_PRICE_ENTITY"), area)
 	elprisetService := services.NewElprisetService(area)
-	priceSources := []services.PriceSource{entsoeService, elprisetService}
+	priceSources := []services.PriceSource{entsoeService, haPriceService, elprisetService}
 	pushoverService := services.NewPushoverService(pushoverApp, pushoverUser)
 	smhiService := services.NewSMHIService(smhiLat, smhiLon)
 	haService := services.NewHomeAssistantService(haURL, haToken)
@@ -197,7 +199,7 @@ func runScheduledPriceFetch(database *db.Database, priceSources []services.Price
 
 	prices, source, err := services.FetchPricesWithRetry(priceSources, startOfToday, endOfTomorrow, priceFetchAttempts, priceFetchBaseDelay)
 	if err != nil {
-		notifyFailure(fmt.Sprintf("Kunde inte hämta elpriser efter %d försök - varken från Entsoe eller reservkällan.", priceFetchAttempts), err)
+		notifyFailure(fmt.Sprintf("Kunde inte hämta elpriser efter %d försök - varken från Entsoe eller reservkällorna.", priceFetchAttempts), err)
 		return // Avbryt - spara INTE mock-data till databasen
 	}
 
